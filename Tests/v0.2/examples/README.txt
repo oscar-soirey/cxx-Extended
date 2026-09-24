@@ -1,0 +1,19 @@
+18 original .cppe corpora used in the final regression suite:
+complex_cpp.cppe
+cpp_regression.cppe
+decorator_body_features.cppe
+decorator_namespace.cppe
+full_integration.cppe
+match_control.cppe
+mega.cppe
+method_decorator.cppe
+named_order.cppe
+named_overloads.cppe
+named_property.cppe
+property_compound.cppe
+property_field.cppe
+property_scope.cppe
+property_unary_expression.cppe
+runtime_enum_factory.cppe
+runtime_reflection.cppe
+struct_union_features.cppe

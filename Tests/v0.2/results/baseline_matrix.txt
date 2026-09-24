@@ -1,0 +1,6 @@
+mega.cppe                           parse=1 emit=NA compile=NA
+property_scope.cppe                 parse=0 emit=0 compile=1
+named_property.cppe                 parse=0 emit=0 compile=0
+property_compound.cppe              parse=0 emit=0 compile=1
+decorator_body_features.cppe        parse=0 emit=0 compile=1
+property_unary_expression.cppe      parse=0 emit=0 compile=1

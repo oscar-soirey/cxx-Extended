@@ -1,0 +1,31 @@
+#include <cstdio>
+
+@register
+struct Stats {
+public:
+    @exposed int value = 1;
+    property value {
+        get { return value; }
+        set { value = value < 0 ? 0 : value; }
+    }
+};
+
+union Choice {
+public:
+    int i;
+    float f;
+    property i {
+        get { return i; }
+        set { i = value; }
+    }
+};
+
+int main() {
+    Stats s;
+    s.value = -5;
+    Choice c;
+    c.i = 8;
+    int r = (int)s.get_member("value");
+    std::printf("%d %d\n", r, c.i);
+    return (r == 0 && c.i == 8) ? 0 : 1;
+}

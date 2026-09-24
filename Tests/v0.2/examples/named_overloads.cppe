@@ -1,0 +1,14 @@
+#include <string>
+#include <cstdio>
+
+int pick(int value, int scale) { return value * scale; }
+int pick(const std::string& value, int scale) { return (int)value.size() * scale; }
+int pair_sum(int left, int right) { return left + right; }
+int pair_sum(double left, double right) { return (int)(left + right); }
+
+int main() {
+    int a = pick(scale=3, value=4);
+    int b = pair_sum(right=2, left=5);
+    std::printf("%d %d\n", a, b);
+    return (a == 12 && b == 7) ? 0 : 1;
+}

@@ -1,0 +1,1511 @@
+--- /mnt/data/cxxe(2).c	2026-09-24 06:44:11.736344118 +0000
++++ cxxe_fixed.c	2026-09-24 07:08:14.147815971 +0000
+@@ -831,6 +831,41 @@
+     ir->nodes[id].resolved_name = xstrdup0(s ? s : "");
+ }
+ 
++static void node_set_value_range(Parser *p, int64_t id, size_t a, size_t b) {
++    char *s = token_range_text(p, a, b);
++    node_set_value(p->ir, id, s);
++    free(s);
++}
++
++static void node_set_type_range(Parser *p, int64_t id, size_t a, size_t b) {
++    char *s = token_range_text(p, a, b);
++    node_set_type(p->ir, id, s);
++    free(s);
++}
++
++static void node_set_return_range(Parser *p, int64_t id, size_t a, size_t b) {
++    char *s = token_range_text(p, a, b);
++    node_set_return(p->ir, id, s);
++    free(s);
++}
++
++static void node_set_qualified_scope(Parser *p, int64_t id, const char *name) {
++    char *s = scope_qualified(p, name);
++    node_set_qualified(p->ir, id, s);
++    free(s);
++}
++
++static void node_set_name_range_owned(IR *ir, int64_t id, char *s) {
++    node_set_name(ir, id, s);
++    free(s);
++}
++
++static void node_set_resolved_owned_scope(Parser *p, int64_t id, const char *name) {
++    char *s = scope_qualified(p, name);
++    node_set_resolved(p->ir, id, s);
++    free(s);
++}
++
+ 
+ /* ------------------------------------------------------------------------- */
+ /* CXXE native decorators                                                     */
+@@ -914,13 +949,13 @@
+     int64_t tpl = ir_add_node(p->ir, N_DECORATOR_TEMPLATE, open, close, parent);
+     size_t starts[128], ends[128], n, i;
+     node_set_name(p->ir, tpl, "template_args");
+-    node_set_value(p->ir, tpl, token_range_text(p, open, close));
++    node_set_value_range(p, tpl, open, close);
+     ir_add_child(p->ir, parent, tpl);
+     if (close <= open + 1) return;
+     n = split_template_args_parser(p, open + 1, close - 1, starts, ends, 128);
+     for (i = 0; i < n; ++i) {
+         int64_t arg = ir_add_node(p->ir, N_DECORATOR_TEMPLATE_ARG, starts[i], ends[i], tpl);
+-        node_set_value(p->ir, arg, token_range_text(p, starts[i], ends[i]));
++        node_set_value_range(p, arg, starts[i], ends[i]);
+         ir_add_child(p->ir, tpl, arg);
+     }
+ }
+@@ -929,7 +964,7 @@
+                                                   size_t template_i, size_t template_close) {
+     int64_t tpl = ir_add_node(p->ir, N_TEMPLATE, template_i, template_close, parent);
+     size_t open = template_i + 1, starts[128], ends[128], n = 0, i;
+-    node_set_value(p->ir, tpl, token_range_text(p, template_i, template_close));
++    node_set_value_range(p, tpl, template_i, template_close);
+     ir_add_child(p->ir, parent, tpl);
+     while (open < template_close && !str_eq(pt(p, open), "<")) open++;
+     if (open >= template_close || template_close <= open + 1) return;
+@@ -947,7 +982,7 @@
+         {
+             int64_t pn = ir_add_node(p->ir, k, aa, bb, tpl);
+             if (name) node_set_name(p->ir, pn, name);
+-            node_set_value(p->ir, pn, token_range_text(p, aa, bb));
++            node_set_value_range(p, pn, aa, bb);
+             if (k == N_TEMPLATE_TYPE_PARAM) node_set_type(p->ir, pn, pt(p, aa));
+             ir_add_child(p->ir, tpl, pn);
+         }
+@@ -978,7 +1013,7 @@
+         p->ir->nodes[n].aux = UINT64_MAX;
+         node_set_name(p->ir, n, spelling);
+         node_set_qualified(p->ir, n, qualified);
+-        node_set_value(p->ir, n, token_range_text(p, a, end));
++        node_set_value_range(p, n, a, end);
+         if (name_end + 1 <= end && str_eq(pt(p, name_end + 1), "<")) {
+             size_t tc = find_template_close_cpp(p, name_end + 1, end + 1);
+             if (tc != SIZE_MAX) parse_decorator_template_args(p, n, name_end + 1, tc);
+@@ -1125,7 +1160,7 @@
+                         free(av);
+                     }
+                 } else {
+-                    node_set_value(p->ir, an, token_range_text(p, start, e));
++                    node_set_value_range(p, an, start, e);
+                 }
+                 ir_add_child(p->ir, call, an);
+             }
+@@ -1135,21 +1170,404 @@
+     }
+ }
+ 
+-static int find_property_by_name(const IR *ir, const char *name, int64_t *out_id);
++static int is_callable_kind(NodeKind k) {
++    return k == N_FUNCTION || k == N_METHOD || k == N_CONSTRUCTOR ||
++           k == N_DESTRUCTOR || k == N_OPERATOR_FUNCTION;
++}
++
++static int64_t find_enclosing_callable_ir(const IR *ir, size_t tok) {
++    size_t i;
++    int64_t best = -1;
++    uint64_t best_span = UINT64_MAX;
++    for (i = 0; i < ir->node_count; ++i) {
++        const IRNode *n = &ir->nodes[i];
++        uint64_t span;
++        if (!is_callable_kind(n->kind) || n->first_tok > tok || n->last_tok < tok) continue;
++        span = n->last_tok - n->first_tok;
++        if (span < best_span) {
++            best_span = span;
++            best = (int64_t)i;
++        }
++    }
++    return best;
++}
++
++static int64_t find_enclosing_type_owner(const IR *ir, int64_t node) {
++    int guard = 0;
++    while (node >= 0 && (size_t)node < ir->node_count && guard++ < 1024) {
++        const IRNode *n = &ir->nodes[node];
++        if (n->kind == N_CLASS || n->kind == N_STRUCT || n->kind == N_UNION) return node;
++        node = n->parent;
++    }
++    return -1;
++}
++
++static size_t ir_callable_body_open(const IR *ir, const IRNode *fn) {
++    size_t i;
++    int par = 0, br = 0, cur = 0;
++    if (!fn || !is_callable_kind(fn->kind) || fn->first_tok >= ir->tokens.n) return SIZE_MAX;
++    for (i = (size_t)fn->first_tok; i <= (size_t)fn->last_tok && i < ir->tokens.n; ++i) {
++        const char *t = ir->tokens.v[i].text;
++        if (!strcmp(t, "(")) par++;
++        else if (!strcmp(t, ")") && par) par--;
++        else if (!strcmp(t, "[")) br++;
++        else if (!strcmp(t, "]") && br) br--;
++        else if (!strcmp(t, "{") && par == 0 && br == 0) { cur++; return i; }
++    }
++    return SIZE_MAX;
++}
++
++static char *normalize_type_tokens_ir(const IR *ir, size_t a, size_t b) {
++    Str s;
++    size_t i;
++    int need_ident = 0;
++    if (a > b || a >= ir->tokens.n) return xstrdup0("");
++    if (b >= ir->tokens.n) b = ir->tokens.n - 1;
++    str_init(&s);
++    for (i = a; i <= b; ++i) {
++        const char *t = ir->tokens.v[i].text;
++        if (!strcmp(t, "const") || !strcmp(t, "volatile") || !strcmp(t, "static") ||
++            !strcmp(t, "mutable") || !strcmp(t, "typename") || !strcmp(t, "struct") ||
++            !strcmp(t, "class") || !strcmp(t, "union") || !strcmp(t, "enum") ||
++            !strcmp(t, "*") || !strcmp(t, "&") || !strcmp(t, "&&")) continue;
++        if (ir->tokens.v[i].kind == TK_IDENTIFIER || !strcmp(t, "::") ||
++            (t[0] && (isalpha((unsigned char)t[0]) || t[0] == '_'))) {
++            if (need_ident && strcmp(t, "::") != 0) str_ch(&s, ' ');
++            str_put(&s, t);
++            need_ident = strcmp(t, "::") != 0;
++        }
++    }
++    return str_take(&s);
++}
++
++static int64_t callable_parameter_for_name(const IR *ir, const IRNode *fn, const char *name) {
++    int64_t c;
++    if (!fn || !name) return -1;
++    for (c = fn->first_child; c >= 0; c = ir->nodes[c].next_sibling) {
++        const IRNode *p = &ir->nodes[c];
++        if (p->kind == N_PARAM_DECL && p->name && strcmp(p->name, name) == 0) return c;
++    }
++    return -1;
++}
++
++static int extract_local_decl_type_ir(const IR *ir, size_t a, size_t b, const char *name, Str *out) {
++    size_t i, name_i = SIZE_MAX, eq = SIZE_MAX, init_open = SIZE_MAX;
++    int par = 0, br = 0, cur = 0;
++    if (a > b || !name || !*name || !out) return 0;
++    if (b >= ir->tokens.n) b = ir->tokens.n - 1;
++    for (i = a; i <= b; ++i) {
++        const char *t = ir->tokens.v[i].text;
++        if (!strcmp(t, "(")) par++;
++        else if (!strcmp(t, ")") && par) par--;
++        else if (!strcmp(t, "[")) br++;
++        else if (!strcmp(t, "]") && br) br--;
++        else if (!strcmp(t, "{") && !par && !br && cur == 0) { init_open = i; break; }
++        else if (!strcmp(t, "{")) cur++;
++        else if (!strcmp(t, "}") && cur) cur--;
++        else if (!par && !br && !cur && !strcmp(t, "=") && eq == SIZE_MAX) eq = i;
++    }
++    {
++        size_t end = b;
++        if (eq != SIZE_MAX) end = eq - 1;
++        else if (init_open != SIZE_MAX) end = init_open - 1;
++        while (end >= a) {
++            if (ir->tokens.v[end].kind == TK_IDENTIFIER && !strcmp(ir->tokens.v[end].text, name)) {
++                name_i = end;
++                break;
++            }
++            if (end == a) break;
++            --end;
++        }
++    }
++    if (name_i == SIZE_MAX || name_i == a) return 0;
++    {
++        char *norm = normalize_type_tokens_ir(ir, a, name_i - 1);
++        if (norm[0]) {
++            str_put(out, norm);
++            free(norm);
++            return 1;
++        }
++        free(norm);
++    }
++    return 0;
++}
++
++static int find_local_decl_type_ir(const IR *ir, const IRNode *fn, size_t before_tok,
++                                   const char *name, Str *out) {
++    size_t body, i, start, target_depth = 0;
++    int par = 0, br = 0, cur = 0;
++    Str best;
++    if (!fn || !name || !*name || !out) return 0;
++    body = ir_callable_body_open(ir, fn);
++    if (body == SIZE_MAX || before_tok <= body) return 0;
++    if (before_tok > fn->last_tok) before_tok = fn->last_tok;
++
++    /* First determine the lexical block depth at the member access. A
++       declaration from a block that has already closed is not visible. */
++    for (i = body + 1; i < before_tok && i < ir->tokens.n; ++i) {
++        const char *t = ir->tokens.v[i].text;
++        if (!strcmp(t, "(")) par++;
++        else if (!strcmp(t, ")") && par) par--;
++        else if (!strcmp(t, "[")) br++;
++        else if (!strcmp(t, "]") && br) br--;
++        else if (!strcmp(t, "{") && !par && !br) cur++;
++        else if (!strcmp(t, "}") && cur && !par && !br) cur--;
++    }
++    target_depth = (size_t)cur;
++
++    /* Second pass: keep the latest declaration of the same identifier that
++       is still in an enclosing lexical block. This preserves normal shadowing
++       without resolving a variable from a sibling block after that block ends. */
++    par = br = cur = 0;
++    start = body + 1;
++    str_init(&best);
++    for (i = body + 1; i < before_tok && i < ir->tokens.n; ++i) {
++        const char *t = ir->tokens.v[i].text;
++        if (!strcmp(t, "(")) par++;
++        else if (!strcmp(t, ")") && par) par--;
++        else if (!strcmp(t, "[")) br++;
++        else if (!strcmp(t, "]") && br) br--;
++        else if (!strcmp(t, "{") && !par && !br) { cur++; start = i + 1; }
++        else if (!strcmp(t, "}") && cur && !par && !br) { cur--; start = i + 1; }
++        else if (!strcmp(t, ";") && !par && !br) {
++            if ((size_t)cur <= target_depth) {
++                Str candidate;
++                str_init(&candidate);
++                if (start <= i && extract_local_decl_type_ir(ir, start, i, name, &candidate)) {
++                    str_free(&best);
++                    best = candidate;
++                } else {
++                    str_free(&candidate);
++                }
++            }
++            start = i + 1;
++        }
++    }
++    if (best.len) {
++        str_putn(out, best.data, best.len);
++        str_free(&best);
++        return 1;
++    }
++    str_free(&best);
++    return 0;
++}
++
++static const char *property_owner_name(const IR *ir, int64_t prop_id) {
++    int64_t p;
++    if (prop_id < 0 || (size_t)prop_id >= ir->node_count) return NULL;
++    p = ir->nodes[prop_id].parent;
++    while (p >= 0 && (size_t)p < ir->node_count) {
++        const IRNode *n = &ir->nodes[p];
++        if (n->kind == N_CLASS || n->kind == N_STRUCT || n->kind == N_UNION) return n->qualified ? n->qualified : n->name;
++        p = n->parent;
++    }
++    return NULL;
++}
++
++static int property_matches_type_context(const IR *ir, int64_t fn_id, const char *type_name, int64_t prop_id) {
++    const IRNode *fn;
++    const IRNode *prop;
++    const char *owner;
++    const char *leaf;
++    size_t i;
++    int unique = 1;
++    Str scope;
++    if (!type_name || !*type_name || fn_id < 0 || (size_t)fn_id >= ir->node_count ||
++        prop_id < 0 || (size_t)prop_id >= ir->node_count) return 0;
++    fn = &ir->nodes[fn_id];
++    prop = &ir->nodes[prop_id];
++    owner = property_owner_name(ir, prop_id);
++    if (!owner || !*owner) return 0;
++    if (!strcmp(type_name, owner)) return 1;
++    leaf = owner;
++    for (i = 0; owner[i]; ++i) if (owner[i] == ':' && owner[i + 1] == ':') leaf = owner + i + 2;
++    if (!strcmp(type_name, leaf)) {
++        for (i = 0; i < ir->node_count; ++i) {
++            const IRNode *other = &ir->nodes[i];
++            const char *oo;
++            if (i == (size_t)prop_id || other->kind != N_PROPERTY || !other->name || strcmp(other->name, prop->name)) continue;
++            oo = property_owner_name(ir, (int64_t)i);
++            if (oo && !strcmp(oo, owner)) continue;
++            if (oo) {
++                const char *ol = oo;
++                size_t q;
++                for (q = 0; oo[q]; ++q) if (oo[q] == ':' && oo[q + 1] == ':') ol = oo + q + 2;
++                if (!strcmp(ol, leaf)) unique = 0;
++            }
++        }
++        if (unique) return 1;
++        str_init(&scope);
++        if (fn->qualified && *fn->qualified) {
++            const char *q = strrchr(fn->qualified, ':');
++            size_t n = q ? (size_t)(q - fn->qualified) : 0;
++            if (q && q > fn->qualified && fn->qualified[q - fn->qualified - 1] == ':') --n;
++            if (n) str_putn(&scope, fn->qualified, n);
++            /* A member function's qualified prefix ends in its owner type. */
++            {
++                int64_t owner_cls = find_enclosing_type_owner(ir, fn_id);
++                if (owner_cls >= 0 && ir->nodes[owner_cls].qualified && scope.len) {
++                    size_t olen = strlen(ir->nodes[owner_cls].qualified);
++                    if (scope.len >= olen && !strncmp(scope.data, ir->nodes[owner_cls].qualified, olen) &&
++                        (scope.len == olen || scope.data[olen] == ':')) scope.len = olen;
++                }
++            }
++        }
++        if (scope.len) {
++            int64_t owner_cls = find_enclosing_type_owner(ir, fn_id);
++            if (owner_cls >= 0 && ir->nodes[owner_cls].qualified) {
++                /* For a member function, an unqualified local type is looked
++                   up in the namespace containing the owner type, not inside
++                   the owner itself. */
++                const char *oq = ir->nodes[owner_cls].qualified;
++                const char *last_colon = strrchr(oq, ':');
++                size_t ns_len = last_colon ? (size_t)(last_colon - oq) : 0;
++                if (last_colon && last_colon > oq && last_colon[-1] == ':') --ns_len;
++                scope.len = 0;
++                if (ns_len) str_putn(&scope, oq, ns_len);
++            }
++            if (scope.len) {
++                Str scoped;
++                str_init(&scoped);
++                str_put(&scoped, scope.data); str_put(&scoped, "::"); str_put(&scoped, leaf);
++                if (!strcmp(scoped.data ? scoped.data : "", owner)) {
++                    str_free(&scoped); str_free(&scope); return 1;
++                }
++                str_free(&scoped);
++            }
++        }
++        str_free(&scope);
++    }
++    return 0;
++}
++
++static int resolve_property_for_member_ir(const IR *ir, size_t sep_tok, const char *receiver,
++                                          const char *member, int64_t *out_id) {
++    int64_t fn_id, receiver_param;
++    size_t i;
++    Str type;
++    if (!receiver || !*receiver || !member || !*member || sep_tok >= ir->tokens.n) return 0;
++    fn_id = find_enclosing_callable_ir(ir, sep_tok);
++    if (fn_id < 0) return 0;
++    if (!strcmp(receiver, "this")) {
++        int64_t cls = find_enclosing_type_owner(ir, fn_id);
++        if (cls >= 0) {
++            for (i = 0; i < ir->node_count; ++i) {
++                const IRNode *p = &ir->nodes[i];
++                if (p->kind != N_PROPERTY || !p->name || strcmp(p->name, member)) continue;
++                if (property_owner_name(ir, (int64_t)i) &&
++                    ir->nodes[cls].qualified && !strcmp(property_owner_name(ir, (int64_t)i), ir->nodes[cls].qualified)) {
++                    if (out_id) *out_id = (int64_t)i;
++                    return 1;
++                }
++            }
++        }
++        return 0;
++    }
++    receiver_param = callable_parameter_for_name(ir, &ir->nodes[fn_id], receiver);
++    str_init(&type);
++    if (receiver_param >= 0 && ir->nodes[receiver_param].type) {
++        char *norm = normalize_type_tokens_ir(ir, ir->nodes[receiver_param].first_tok,
++                                               ir->nodes[receiver_param].last_tok);
++        /* Prefer the parameter's declared `type` field, because its token span
++           also contains the parameter name. */
++        free(norm);
++        {
++            size_t first = (size_t)ir->nodes[receiver_param].first_tok, last = (size_t)ir->nodes[receiver_param].last_tok;
++            size_t ni = last;
++            while (ni >= first && !(ir->tokens.v[ni].kind == TK_IDENTIFIER && ir->nodes[receiver_param].name &&
++                                     !strcmp(ir->tokens.v[ni].text, ir->nodes[receiver_param].name))) {
++                if (ni == first) break;
++                --ni;
++            }
++            if (ni > first) {
++                char *pnorm = normalize_type_tokens_ir(ir, first, ni - 1);
++                if (pnorm && *pnorm) str_put(&type, pnorm);
++                free(pnorm);
++            }
++        }
++    } else {
++        find_local_decl_type_ir(ir, &ir->nodes[fn_id], sep_tok, receiver, &type);
++        /* A member access may use a field of the enclosing class as its
++           receiver. Resolve the field's declared type before falling back to
++           the global property-name search. */
++        if (!type.len) {
++            int64_t owner_cls = find_enclosing_type_owner(ir, fn_id);
++            if (owner_cls >= 0) {
++                int64_t fc;
++                for (fc = ir->nodes[owner_cls].first_child; fc >= 0; fc = ir->nodes[fc].next_sibling) {
++                    const IRNode *field = &ir->nodes[fc];
++                    if (field->kind != N_FIELD_DECL || !field->name || strcmp(field->name, receiver) != 0) continue;
++                    if (field->type && *field->type) {
++                        char *fnorm = xstrdup0(field->type);
++                        size_t k;
++                        for (k = 0; fnorm[k]; ++k) {
++                            if (fnorm[k] == '&' || fnorm[k] == '*') fnorm[k] = ' ';
++                        }
++                        {
++                            size_t a = 0, z = strlen(fnorm);
++                            while (a < z && isspace((unsigned char)fnorm[a])) a++;
++                            while (z > a && isspace((unsigned char)fnorm[z - 1])) z--;
++                            if (z > a) str_putn(&type, fnorm + a, z - a);
++                        }
++                        free(fnorm);
++                    }
++                    break;
++                }
++            }
++        }
++    }
++    if (!type.len) { str_free(&type); return 0; }
++    for (i = 0; i < ir->node_count; ++i) {
++        const IRNode *p = &ir->nodes[i];
++        if (p->kind != N_PROPERTY || !p->name || strcmp(p->name, member)) continue;
++        if (property_matches_type_context(ir, fn_id, type.data, (int64_t)i)) {
++            if (out_id) *out_id = (int64_t)i;
++            str_free(&type);
++            return 1;
++        }
++    }
++    str_free(&type);
++    return 0;
++}
++
++static int find_property_for_parser_member(Parser *p, size_t sep_tok, const char *member, int64_t *out_id) {
++    const char *receiver;
++    if (!p || sep_tok == 0 || sep_tok >= p->ir->tokens.n || !member) return 0;
++    receiver = p->ir->tokens.v[sep_tok - 1].text;
++    return resolve_property_for_member_ir(p->ir, sep_tok, receiver, member, out_id);
++}
+ 
+ static void add_expr_nodes(Parser *p, int64_t parent, size_t a, size_t b) {
+     IR *ir = p->ir;
+     size_t i;
+     if (a > b || b >= ir->tokens.n) return;
+ 
+-    /* assignment */
++    /* Assignment nodes describe one expression/statement range. This helper
++       is also called for an entire compound function body, so creating one
++       node merely because an `=` exists somewhere in that body produces a
++       span over all following statements. The emitter then sees that broad
++       native node and skips unrelated constructs. Only create the node when
++       the range contains at most one top-level statement terminator and no
++       top-level block boundary. */
+     {
+-        size_t op;
+-        if (looks_like_assignment(p, a, b, &op)) {
++        size_t op, j;
++        int top_semis = 0, top_blocks = 0;
++        int par = 0, br = 0, cur = 0;
++        for (j = a; j <= b; ++j) {
++            const char *jt = pt(p, j);
++            if (str_eq(jt, "(")) par++;
++            else if (str_eq(jt, ")") && par) par--;
++            else if (str_eq(jt, "[")) br++;
++            else if (str_eq(jt, "]") && br) br--;
++            else if (str_eq(jt, "{")) { if (!par && !br) top_blocks++; cur++; }
++            else if (str_eq(jt, "}") && cur) { cur--; }
++            else if (str_eq(jt, ";") && !par && !br && !cur) top_semis++;
++        }
++        if (!top_blocks && top_semis <= 1 && looks_like_assignment(p, a, b, &op)) {
+             int64_t n = ir_add_node(ir, N_ASSIGN_EXPR, a, b, parent);
+             ir->nodes[n].flags = 1;
+             node_set_name(ir, n, pt(p, op));
+-            node_set_value(ir, n, token_range_text(p, a, b));
++            node_set_value_range(p, n, a, b);
+             ir_add_child(ir, parent, n);
+         }
+     }
+@@ -1173,7 +1591,7 @@
+                 close = find_matching(p, brace, b + 1);
+                 if (close <= b) {
+                     int64_t mn = ir_add_node(ir, N_MATCH_STMT, i, close, parent);
+-                    node_set_value(ir, mn, token_range_text(p, i, close));
++                    node_set_value_range(p, mn, i, close);
+                     ir->nodes[mn].aux = brace;
+                     ir_add_child(ir, parent, mn);
+                     i = close;
+@@ -1191,13 +1609,36 @@
+             ir_add_child(ir, parent, n);
+         } else if ((str_eq(t, ".") || str_eq(t, "->")) && i + 1 <= b && pk(p, i + 1) == TK_IDENTIFIER) {
+             int64_t prop = -1;
+-            if (i > a && find_property_by_name(ir, pt(p, i + 1), &prop)) {
++            if (i > a && find_property_for_parser_member(p, i, pt(p, i + 1), &prop)) {
+                 int64_t n = ir_add_node(ir, N_PROPERTY_ACCESS, i - 1, i + 1, parent);
+                 node_set_name(ir, n, pt(p, i + 1));
+                 node_set_qualified(ir, n, ir->nodes[prop].qualified);
+                 ir->nodes[n].aux = (uint64_t)prop;
+-                node_set_value(ir, n, token_range_text(p, i - 1, i + 1));
++                node_set_value_range(p, n, i - 1, i + 1);
+                 ir_add_child(ir, parent, n);
++                /* Postfix property mutation is a distinct expression. Keep the
++                   full `receiver.member++/--` span so the backend can lower it
++                   without ever producing `get_member()++`. */
++                if (i + 2 <= b && (str_eq(pt(p, i + 2), "++") || str_eq(pt(p, i + 2), "--"))) {
++                    int64_t un = ir_add_node(ir, N_UNARY_EXPR, i - 1, i + 2, parent);
++                    node_set_name(ir, un, pt(p, i + 2));
++                    node_set_value_range(p, un, i - 1, i + 2);
++                    ir->nodes[un].aux = (uint64_t)prop;
++                    ir_add_child(ir, parent, un);
++                }
++            }
++        } else if ((str_eq(t, "++") || str_eq(t, "--")) && i + 3 <= b &&
++                   is_identifier(p, i + 1) && (str_eq(pt(p, i + 2), ".") || str_eq(pt(p, i + 2), "->")) &&
++                   pk(p, i + 3) == TK_IDENTIFIER) {
++            int64_t prop = -1;
++            if (find_property_for_parser_member(p, i + 2, pt(p, i + 3), &prop)) {
++                int64_t un = ir_add_node(ir, N_UNARY_EXPR, i, i + 3, parent);
++                node_set_name(ir, un, t);
++                node_set_value_range(p, un, i, i + 3);
++                ir->nodes[un].aux = (uint64_t)prop;
++                ir_add_child(ir, parent, un);
++                i += 3;
++                continue;
+             }
+         } else if (is_identifier(p, i)) {
+             /* CXXE native member intrinsic: object.get_member("name").
+@@ -1210,7 +1651,7 @@
+                     int64_t n = ir_add_node(ir, N_FUNC_CALL, i, close, parent);
+                     node_set_name(ir, n, "get_member");
+                     node_set_qualified(ir, n, "get_member");
+-                    node_set_value(ir, n, token_range_text(p, i, close));
++                    node_set_value_range(p, n, i, close);
+                     if (i + 4 <= close - 1) parse_call_arguments(p, n, i + 4, close - 1);
+                     ir_add_child(ir, parent, n);
+                     i = close;
+@@ -1236,7 +1677,7 @@
+                         node_set_name(ir, n, pt(p, j));
+                         node_set_qualified(ir, n, qname);
+                         node_set_resolved(ir, n, resolved);
+-                        node_set_value(ir, n, token_range_text(p, i, close));
++                        node_set_value_range(p, n, i, close);
+                         if (open + 1 <= close - 1) parse_call_arguments(p, n, open + 1, close - 1);
+                         ir_add_child(ir, parent, n);
+                         free(qname);
+@@ -1251,7 +1692,7 @@
+                 char *qname = join_qualified(p, i, j);
+                 node_set_name(ir, n, pt(p, j));
+                 node_set_qualified(ir, n, qname);
+-                node_set_resolved(ir, n, scope_qualified(p, qname));
++                node_set_resolved_owned_scope(p, n, qname);
+                 ir_add_child(ir, parent, n);
+                 free(qname);
+             }
+@@ -1270,7 +1711,7 @@
+             size_t close = find_matching(p, i, b + 1);
+             if (close <= b) {
+                 int64_t n = ir_add_node(ir, N_INDEX_EXPR, i, close, parent);
+-                node_set_value(ir, n, token_range_text(p, i, close));
++                node_set_value_range(p, n, i, close);
+                 ir_add_child(ir, parent, n);
+                 i = close;
+             }
+@@ -1278,11 +1719,11 @@
+ 
+         if (str_eq(t, "new")) {
+             int64_t n = ir_add_node(ir, N_NEW_EXPR, i, b, parent);
+-            node_set_value(ir, n, token_range_text(p, i, b));
++            node_set_value_range(p, n, i, b);
+             ir_add_child(ir, parent, n);
+         } else if (str_eq(t, "delete")) {
+             int64_t n = ir_add_node(ir, N_DELETE_EXPR, i, b, parent);
+-            node_set_value(ir, n, token_range_text(p, i, b));
++            node_set_value_range(p, n, i, b);
+             ir_add_child(ir, parent, n);
+         }
+     }
+@@ -1307,17 +1748,17 @@
+     for (i = (eq == SIZE_MAX ? b : eq - 1); i >= a; --i) {
+         if (is_identifier(p, i)) {
+             node_set_name(p->ir, n, pt(p, i));
+-            node_set_qualified(p->ir, n, scope_qualified(p, pt(p, i)));
++            node_set_qualified_scope(p, n, pt(p, i));
+             break;
+         }
+         if (i == a) break;
+     }
+-    if (eq != SIZE_MAX && eq > a) node_set_value(p->ir, n, token_range_text(p, eq + 1, b));
+-    else node_set_value(p->ir, n, token_range_text(p, a, b));
++    if (eq != SIZE_MAX && eq > a) node_set_value_range(p, n, eq + 1, b);
++    else node_set_value_range(p, n, a, b);
+     {
+         size_t name_i = SIZE_MAX;
+         for (i = a; i <= b; ++i) if (is_identifier(p, i) && strcmp(pt(p, i), p->ir->nodes[n].name ? p->ir->nodes[n].name : "") == 0) { name_i = i; break; }
+-        if (name_i != SIZE_MAX && name_i > a) node_set_type(p->ir, n, token_range_text(p, a, name_i - 1));
++        if (name_i != SIZE_MAX && name_i > a) node_set_type_range(p, n, a, name_i - 1);
+     }
+ }
+ 
+@@ -1399,7 +1840,7 @@
+         node_set_name(p->ir, fn, name);
+         node_set_qualified(p->ir, fn, qual);
+         if (kind == N_OPERATOR_FUNCTION) node_set_resolved(p->ir, fn, qual);
+-        if (name_i > a) node_set_return(p->ir, fn, token_range_text(p, a, name_i - 1));
++        if (name_i > a) node_set_return_range(p, fn, a, name_i - 1);
+         parse_parameters(p, fn, open_paren + 1, close_paren - 1);
+ 
+         /* CXXE accepts both `f(...) {}` and C++ trailing-return syntax
+@@ -1445,7 +1886,7 @@
+             while (j + 1 <= b && !(str_eq(pt(p, j), "]") && str_eq(pt(p, j + 1), "]"))) j++;
+             if (j + 1 <= b) {
+                 int64_t n = ir_add_node(p->ir, N_ATTRIBUTE, i, j + 1, parent);
+-                node_set_value(p->ir, n, token_range_text(p, i, j + 1));
++                node_set_value_range(p, n, i, j + 1);
+                 ir_add_child(p->ir, parent, n);
+                 i = j + 2;
+                 continue;
+@@ -1505,14 +1946,14 @@
+         while (*q && isspace((unsigned char)*q)) q++;
+         if (*q == '"') {
+             const char *e = strchr(q + 1, '"');
+-            if (e) node_set_name(p->ir, n, xstrndup0(q + 1, (size_t)(e - (q + 1))));
++            if (e) node_set_name_range_owned(p->ir, n, xstrndup0(q + 1, (size_t)(e - (q + 1))));
+         } else if (*q == '<') {
+             const char *e = strchr(q + 1, '>');
+-            if (e) node_set_name(p->ir, n, xstrndup0(q + 1, (size_t)(e - (q + 1))));
++            if (e) node_set_name_range_owned(p->ir, n, xstrndup0(q + 1, (size_t)(e - (q + 1))));
+         } else if (*q) {
+             const char *e = q;
+             while (*e && !isspace((unsigned char)*e)) e++;
+-            node_set_name(p->ir, n, xstrndup0(q, (size_t)(e - q)));
++            node_set_name_range_owned(p->ir, n, xstrndup0(q, (size_t)(e - q)));
+         }
+         if (strcmp(kw, "include_next") == 0) p->ir->nodes[n].flags |= NF_INCLUDE_NEXT;
+     } else if (strcmp(kw, "define") == 0) {
+@@ -1525,7 +1966,7 @@
+         {
+             const char *name_start = q;
+             while (*q && (isalnum((unsigned char)*q) || *q == '_')) q++;
+-            if (q > name_start) node_set_name(p->ir, n, xstrndup0(name_start, (size_t)(q - name_start)));
++            if (q > name_start) node_set_name_range_owned(p->ir, n, xstrndup0(name_start, (size_t)(q - name_start)));
+         }
+     }
+     ir_add_child(p->ir, parent, n);
+@@ -1567,7 +2008,7 @@
+ 
+     {
+         int64_t n = ir_add_node(p->ir, k, a, b, parent);
+-        node_set_value(p->ir, n, token_range_text(p, a, b));
++        node_set_value_range(p, n, a, b);
+         ir_add_child(p->ir, parent, n);
+         add_expr_nodes(p, n, a, b);
+     }
+@@ -1598,8 +2039,8 @@
+     {
+         int64_t prop = ir_add_node(p->ir, N_PROPERTY, a, close, cls);
+         node_set_name(p->ir, prop, pt(p, name_i));
+-        node_set_qualified(p->ir, prop, scope_qualified(p, pt(p, name_i)));
+-        node_set_value(p->ir, prop, token_range_text(p, a, close));
++        node_set_qualified_scope(p, prop, pt(p, name_i));
++        node_set_value_range(p, prop, a, close);
+         mark_access(p->ir, prop, access);
+         ir_add_child(p->ir, cls, prop);
+         for (i = brace + 1; i < close; ) {
+@@ -1609,7 +2050,7 @@
+                     NodeKind nk = str_eq(pt(p, i), "get") ? N_PROPERTY_GET : N_PROPERTY_SET;
+                     int64_t child = ir_add_node(p->ir, nk, i, oc, prop);
+                     node_set_name(p->ir, child, pt(p, i));
+-                    node_set_value(p->ir, child, token_range_text(p, i, oc));
++                    node_set_value_range(p, child, i, oc);
+                     ir_add_child(p->ir, prop, child);
+                     i = oc + 1;
+                     continue;
+@@ -1625,23 +2066,7 @@
+     }
+ }
+ 
+-static int find_property_by_name(const IR *ir, const char *name, int64_t *out_id) {
+-    size_t i;
+-    if (!name || !*name) return 0;
+ 
+-    /* Property names are case-sensitive and must be matched literally.
+-       There is intentionally no Health -> health (or reverse) fallback:
+-       a property and its backing field are a pair only when their declared
+-       names are exactly identical. */
+-    for (i = 0; i < ir->node_count; ++i) {
+-        const IRNode *n = &ir->nodes[i];
+-        if (n->kind == N_PROPERTY && n->name && strcmp(n->name, name) == 0) {
+-            if (out_id) *out_id = (int64_t)i;
+-            return 1;
+-        }
+-    }
+-    return 0;
+-}
+ 
+ static int find_field_in_class_by_name(const IR *ir, int64_t cls, const char *name, int64_t *out_id) {
+     int64_t c;
+@@ -1682,11 +2107,11 @@
+                 if(looks_like_assignment(p,start,end,&op) && op>start && is_identifier(p,op-1)){
+                     size_t pn=op-1;
+                     int64_t pid=-1;
+-                    if(find_property_by_name(p->ir,pt(p,pn),&pid) && pn>start &&
+-                       (str_eq(pt(p,pn-1),".")||str_eq(pt(p,pn-1),"->"))){
++                    if(pn>start && (str_eq(pt(p,pn-1),".")||str_eq(pt(p,pn-1),"->")) &&
++                       resolve_property_for_member_ir(p->ir, pn - 1, pt(p, pn - 2), pt(p, pn), &pid)){
+                         int64_t n=ir_add_node(p->ir,N_ASSIGN_EXPR,start,end,parent);
+                         node_set_name(p->ir,n,pt(p,op));
+-                        node_set_value(p->ir,n,token_range_text(p,start,end));
++                        node_set_value_range(p, n, start, end);
+                         ir_add_child(p->ir,parent,n);
+                     }
+                 }
+@@ -1717,7 +2142,7 @@
+             if (start < i) {
+                 /* An incomplete previous declaration: keep it losslessly. */
+                 int64_t raw = ir_add_node(p->ir, N_RAW, start, i - 1, cls);
+-                node_set_value(p->ir, raw, token_range_text(p, start, i - 1));
++                node_set_value_range(p, raw, start, i - 1);
+                 mark_access(p->ir, raw, access);
+                 ir_add_child(p->ir, cls, raw);
+                 parser_apply_pending(p, raw);
+@@ -1758,6 +2183,14 @@
+             size_t open_paren = find_top_call_paren(p, start, i);
+             if (open_paren != SIZE_MAX) {
+                 size_t e = find_stmt_end(p, start, b + 1);
++                /* Consume exactly a member-function body here. The general
++                   find_stmt_end() helper intentionally continues through
++                   nested braces until a top-level semicolon, but a class
++                   body has subsequent members that must remain visible. */
++                if (str_eq(pt(p, i), "{")) {
++                    size_t body_close = find_matching(p, i, b + 1);
++                    if (body_close <= b) e = body_close;
++                }
+                 int64_t n = -1;
+                 if (parse_function_like(p, start, e, cls, class_name, open_paren, &n) && n >= 0) {
+                     mark_access(p->ir, n, access);
+@@ -1772,7 +2205,7 @@
+ 
+     if (start <= b) {
+         int64_t raw = ir_add_node(p->ir, N_RAW, start, b, cls);
+-        node_set_value(p->ir, raw, token_range_text(p, start, b));
++        node_set_value_range(p, raw, start, b);
+         mark_access(p->ir, raw, access);
+         ir_add_child(p->ir, cls, raw);
+         parser_apply_pending(p, raw);
+@@ -1790,7 +2223,7 @@
+     if (brace == SIZE_MAX) {
+         int64_t n = ir_add_node(p->ir, kind, a, b, parent);
+         mark_access(p->ir, n, kind == N_CLASS ? NF_ACCESS_PRIVATE : NF_ACCESS_PUBLIC);
+-        node_set_value(p->ir, n, token_range_text(p, a, b));
++        node_set_value_range(p, n, a, b);
+         if (name_i != SIZE_MAX) {
+             name = xstrdup0(pt(p, name_i));
+             qname = scope_qualified(p, name);
+@@ -1814,7 +2247,7 @@
+             node_set_qualified(p->ir, n, qname);
+             scope_push(p, name);
+         }
+-        node_set_value(p->ir, n, token_range_text(p, a, close));
++        node_set_value_range(p, n, a, close);
+         ir_add_child(p->ir, parent, n);
+         parser_apply_pending(p, n);
+         if (name_i != SIZE_MAX) {
+@@ -1839,7 +2272,7 @@
+     int64_t en = ir_add_node(p->ir, N_ENUM, a, close, parent);
+     if (name_i != SIZE_MAX) {
+         node_set_name(p->ir, en, pt(p, name_i));
+-        node_set_qualified(p->ir, en, scope_qualified(p, pt(p, name_i)));
++        node_set_qualified_scope(p, en, pt(p, name_i));
+     }
+     ir_add_child(p->ir, parent, en);
+     size_t s = brace + 1;
+@@ -1848,7 +2281,7 @@
+             if (s < i) {
+                 int64_t e = ir_add_node(p->ir, N_ENUMERATOR, s, i == close ? i - 1 : i - 1, en);
+                 if (is_identifier(p, s)) node_set_name(p->ir, e, pt(p, s));
+-                node_set_value(p->ir, e, token_range_text(p, s, i - 1));
++                node_set_value_range(p, e, s, i - 1);
+                 ir_add_child(p->ir, en, e);
+             }
+             s = i + 1;
+@@ -1857,20 +2290,48 @@
+ }
+ 
+ static int looks_like_var_decl(Parser *p, size_t a, size_t b) {
+-    size_t i;
++    size_t i, semi = b;
+     if (a > b) return 0;
+-    if (str_eq(pt(p, a), "return") || str_eq(pt(p, a), "if") || str_eq(pt(p, a), "for") || str_eq(pt(p, a), "while") || str_eq(pt(p, a), "switch") || str_eq(pt(p, a), "throw")) return 0;
++    if (str_eq(pt(p, a), "return") || str_eq(pt(p, a), "if") || str_eq(pt(p, a), "for") ||
++        str_eq(pt(p, a), "while") || str_eq(pt(p, a), "switch") || str_eq(pt(p, a), "throw")) return 0;
++
++    /* Existing declaration forms with an obvious type/name boundary. */
+     for (i = a; i <= b; ++i) {
+-        if (str_eq(pt(p, i), "=") || str_eq(pt(p, i), ";")) continue;
++        if (str_eq(pt(p, i), ";")) { semi = i; break; }
++        if (str_eq(pt(p, i), "=") || str_eq(pt(p, i), ":")) continue;
+         if (pk(p, i) == TK_IDENTIFIER || pk(p, i) == TK_PUNCT) {
+-            if (i > a && is_identifier(p, i) && (str_eq(pt(p, i - 1), "*") || str_eq(pt(p, i - 1), "&") || is_keyword(pt(p, i - 1)))) return 1;
++            if (i > a && is_identifier(p, i) &&
++                (str_eq(pt(p, i - 1), "*") || str_eq(pt(p, i - 1), "&") || is_keyword(pt(p, i - 1)))) return 1;
+         }
+     }
+     if (is_keyword(pt(p, a)) || str_eq(pt(p, a), "dynamic")) return 1;
++
++    /* Qualified / user-defined local declarations such as
++       `Outer::Player p;` and `Character c;`. At this stage semantic lookup is
++       deliberately deferred; the parser only needs the unambiguous syntactic
++       property that the final declarator name is an identifier not preceded
++       by member/qualified-access punctuation. Expression statements such as
++       `object.member;` and `object->member;` therefore stay expressions. */
++    if (semi > a) {
++        size_t last = semi;
++        if (last > a && str_eq(pt(p, last), ";")) --last;
++        if (last > a && is_identifier(p, last) &&
++            !str_eq(pt(p, last - 1), ".") && !str_eq(pt(p, last - 1), "->") &&
++            !str_eq(pt(p, last - 1), "::")) {
++            int has_type_tokens = 0;
++            for (i = a; i < last; ++i) {
++                if (is_identifier(p, i) || str_eq(pt(p, i), "::") || str_eq(pt(p, i), "*") ||
++                    str_eq(pt(p, i), "&") || str_eq(pt(p, i), "const") || str_eq(pt(p, i), "volatile")) {
++                    has_type_tokens = 1;
++                    break;
++                }
++            }
++            if (has_type_tokens) return 1;
++        }
++    }
+     return 0;
+ }
+ 
+-
+ /* ------------------------------------------------------------------------- */
+ /* Custom decorator declarations                                             */
+ /*                                                                           */
+@@ -1891,10 +2352,24 @@
+         else if (str_eq(t, ")") && par) par--;
+         else if (str_eq(t, "[")) br++;
+         else if (str_eq(t, "]") && br) br--;
++        else if (str_eq(t, "{") && par == 0 && br == 0 && cur == 0 && angle == 0) {
++            /* An ordinary top-level function/class body proves this is not a
++               custom decorator declaration. */
++            return 0;
++        }
+         else if (str_eq(t, "{")) cur++;
+         else if (str_eq(t, "}") && cur) cur--;
+         else if (str_eq(t, "<")) angle++;
+         else if (str_eq(t, ">") && angle) angle--;
++        else if (str_eq(t, ";") && par == 0 && br == 0 && cur == 0 && angle == 0) {
++            /* A completed top-level declaration before `@` is not a custom
++               decorator declaration. */
++            /* A custom decorator declaration must reach `@` before it reaches
++               the first top-level terminator/body. Otherwise an ordinary
++               function definition followed by `@decorator` would be consumed
++               as one decorator declaration. */
++            return 0;
++        }
+         else if (str_eq(t, "@") && par == 0 && br == 0 && cur == 0 && angle == 0) {
+             if (at_out) *at_out = i;
+             return 1;
+@@ -1986,7 +2461,11 @@
+     {
+         int64_t n = ir_add_node(p->ir, N_CUSTOM_DECORATOR, a, body_close, parent);
+         Str rt; str_init(&rt);
+-        str_put(&rt, token_range_text(p, decl_start, at - 1));
++        {
++            char *decl_return = token_range_text(p, decl_start, at - 1);
++            str_put(&rt, decl_return);
++            free(decl_return);
++        }
+         str_trim_ascii(&rt);
+         node_set_return(p->ir, n, rt.data ? rt.data : "");
+         str_free(&rt);
+@@ -1997,14 +2476,14 @@
+             node_set_qualified(p->ir, n, decorator_qualified);
+             free(decorator_name); free(decorator_qualified);
+         }
+-        node_set_value(p->ir, n, token_range_text(p, a, body_close));
++        node_set_value_range(p, n, a, body_close);
+         ir_add_child(p->ir, parent, n);
+         if (template_i != SIZE_MAX) parse_custom_decorator_template_decl(p, n, template_i, template_close);
+         if (params_open != SIZE_MAX && params_close > params_open + 1) parse_parameters(p, n, params_open + 1, params_close - 1);
+         {
+             int64_t target = ir_add_node(p->ir, N_DECORATOR_TARGET, target_open - 1, target_close, n);
+             node_set_name(p->ir, target, "func");
+-            node_set_value(p->ir, target, token_range_text(p, target_open - 1, target_close));
++            node_set_value_range(p, target, target_open - 1, target_close);
+             ir_add_child(p->ir, n, target);
+             if (target_close == target_open + 2 && str_eq(pt(p, target_open + 1), "...")) p->ir->nodes[target].flags |= NF_DECORATOR_VARIADIC;
+             else if (target_close > target_open + 1) parse_parameters(p, target, target_open + 1, target_close - 1);
+@@ -2055,7 +2534,7 @@
+             if (j <= b) {
+                 size_t e = find_stmt_end(p, j + 1, b + 1);
+                 int64_t n = ir_add_node(p->ir, N_TEMPLATE, i, e, parent);
+-                node_set_value(p->ir, n, token_range_text(p, i, e));
++                node_set_value_range(p, n, i, e);
+                 ir_add_child(p->ir, parent, n);
+                 i = e + 1;
+                 continue;
+@@ -2071,10 +2550,10 @@
+                 int64_t n = ir_add_node(p->ir, N_NAMESPACE, i, close <= b ? close : b, parent);
+                 if (name_i != SIZE_MAX) {
+                     node_set_name(p->ir, n, pt(p, name_i));
+-                    node_set_qualified(p->ir, n, scope_qualified(p, pt(p, name_i)));
++                    node_set_qualified_scope(p, n, pt(p, name_i));
+                     scope_push(p, pt(p, name_i));
+                 }
+-                node_set_value(p->ir, n, token_range_text(p, i, close <= b ? close : b));
++                node_set_value_range(p, n, i, close <= b ? close : b);
+                 ir_add_child(p->ir, parent, n);
+                 if (close > brace) parse_region_items(p, brace + 1, close - 1, n, 0, NULL);
+                 if (name_i != SIZE_MAX) scope_pop(p);
+@@ -2125,7 +2604,7 @@
+             for (j = i + 1; j <= e; ++j) if (str_eq(pt(p, j), "namespace")) k = N_USING_DIRECTIVE;
+             int64_t n = ir_add_node(p->ir, k, i, e, parent);
+             if (i + 1 <= e && is_identifier(p, i + 1)) node_set_name(p->ir, n, pt(p, i + 1));
+-            node_set_value(p->ir, n, token_range_text(p, i, e));
++            node_set_value_range(p, n, i, e);
+             ir_add_child(p->ir, parent, n);
+             parser_apply_pending(p, n);
+             i = e + 1;
+@@ -2136,7 +2615,7 @@
+             size_t e = find_stmt_end(p, i, b + 1);
+             int64_t n = ir_add_node(p->ir, N_CONCEPT, i, e, parent);
+             if (i + 1 <= e && is_identifier(p, i + 1)) node_set_name(p->ir, n, pt(p, i + 1));
+-            node_set_value(p->ir, n, token_range_text(p, i, e));
++            node_set_value_range(p, n, i, e);
+             ir_add_child(p->ir, parent, n);
+             parser_apply_pending(p, n);
+             i = e + 1;
+@@ -2146,7 +2625,7 @@
+         if (str_eq(pt(p, i), "friend")) {
+             size_t e = find_stmt_end(p, i, b + 1);
+             int64_t n = ir_add_node(p->ir, N_FRIEND, i, e, parent);
+-            node_set_value(p->ir, n, token_range_text(p, i, e));
++            node_set_value_range(p, n, i, e);
+             ir_add_child(p->ir, parent, n);
+             parser_apply_pending(p, n);
+             i = e + 1;
+@@ -2194,7 +2673,7 @@
+                         size_t bc = find_matching(p, body, e + 1);
+                         NodeKind sk = str_eq(pt(p, i), "if") ? N_IF_STMT : str_eq(pt(p, i), "for") ? N_FOR_STMT : str_eq(pt(p, i), "while") ? N_WHILE_STMT : str_eq(pt(p, i), "switch") ? N_SWITCH_STMT : N_CATCH;
+                         int64_t n = ir_add_node(p->ir, sk, i, bc <= e ? bc : e, parent);
+-                        node_set_value(p->ir, n, token_range_text(p, i, bc <= e ? bc : e));
++                        node_set_value_range(p, n, i, bc <= e ? bc : e);
+                         ir_add_child(p->ir, parent, n);
+                         if (bc > body) parse_region_items(p, body + 1, bc - 1, n, 0, NULL);
+                         i = (bc <= e ? bc + 1 : e + 1);
+@@ -2211,7 +2690,7 @@
+                 parser_apply_pending(p, n);
+                 if (looks_like_assignment(p, i, e, NULL)) {
+                     int64_t a = ir_add_node(p->ir, N_VAR_ASSIGN, i, e, n);
+-                    node_set_value(p->ir, a, token_range_text(p, i, e));
++                    node_set_value_range(p, a, i, e);
+                     ir_add_child(p->ir, n, a);
+                 }
+             } else {
+@@ -2596,6 +3075,52 @@
+ static int decorator_template_arg_ranges(const IR *ir, const IRNode *dec, size_t *starts, size_t *ends, size_t cap);
+ static size_t custom_decorator_template_param_count(const IR *ir, const IRNode *cd);
+ 
++static int find_custom_decorator_use(const IR *ir, const IRNode *use, int64_t *out_id) {
++    size_t i, len, name_len, name_start, scope_len;
++    const char *qualified = use->qualified && *use->qualified ? use->qualified : use->name;
++    const char *name = use->name && *use->name ? use->name : qualified;
++    char candidate[4096];
++    if (!qualified || !*qualified || !name || !*name) return 0;
++    len = strlen(qualified);
++    name_len = strlen(name);
++    if (len < name_len || strcmp(qualified + len - name_len, name) != 0) return 0;
++
++    /* Resolve from the innermost lexical scope outward:
++         A::B::decorator -> A::B::decorator -> A::decorator -> decorator. */
++    name_start = len - name_len;
++    scope_len = name_start;
++    if (scope_len >= 2 && qualified[scope_len - 2] == ':' && qualified[scope_len - 1] == ':')
++        scope_len -= 2;
++
++    for (;;) {
++        size_t pos = 0;
++        if (scope_len) {
++            if (scope_len + 2 + name_len >= sizeof(candidate)) return 0;
++            memcpy(candidate, qualified, scope_len);
++            candidate[scope_len] = ':';
++            candidate[scope_len + 1] = ':';
++            memcpy(candidate + scope_len + 2, name, name_len);
++            candidate[scope_len + 2 + name_len] = 0;
++        } else {
++            snprintf(candidate, sizeof(candidate), "%s", name);
++        }
++        for (i = 0; i < ir->node_count; ++i) {
++            const IRNode *cd = &ir->nodes[i];
++            const char *cq = cd->qualified && *cd->qualified ? cd->qualified : cd->name;
++            if (cd->kind == N_CUSTOM_DECORATOR && cq && strcmp(cq, candidate) == 0) {
++                if (out_id) *out_id = (int64_t)i;
++                return 1;
++            }
++        }
++        if (!scope_len) break;
++        pos = scope_len;
++        while (pos >= 2 && !(qualified[pos - 2] == ':' && qualified[pos - 1] == ':')) --pos;
++        if (pos < 2) scope_len = 0;
++        else scope_len = pos - 2 + 0;
++    }
++    return 0;
++}
++
+ static void resolve_native_features(IR *ir) {
+     size_t i;
+     /* Decorators become semantic flags on their targets. */
+@@ -2627,20 +3152,19 @@
+        is a compile-time error. */
+     for (i = 0; i < ir->node_count; ++i) {
+         IRNode *d = &ir->nodes[i];
+-        size_t j;
+         int found = 0;
+         const char *dkey;
+         if (d->kind != N_DECORATOR || d->aux == UINT64_MAX) continue;
+         if (d->flags & NF_DECORATOR_NATIVE) continue;
+         dkey = d->qualified ? d->qualified : d->name;
+-        for (j = 0; j < ir->node_count; ++j) {
+-            IRNode *cd = &ir->nodes[j];
+-            const char *ckey = cd->qualified ? cd->qualified : cd->name;
+-            if (cd->kind == N_CUSTOM_DECORATOR && dkey && ckey && strcmp(ckey, dkey) == 0) {
++        {
++            int64_t cd_id = -1;
++            if (find_custom_decorator_use(ir, d, &cd_id)) {
++                IRNode *cd = &ir->nodes[cd_id];
++                const char *ckey = cd->qualified ? cd->qualified : cd->name;
+                 d->flags |= NF_DECORATOR_CUSTOM;
+-                d->resolved_name = d->resolved_name ? d->resolved_name : xstrdup0(ckey);
++                node_set_resolved(ir, (int64_t)i, ckey ? ckey : dkey);
+                 found = 1;
+-                break;
+             }
+         }
+         if (!found) {
+@@ -2769,6 +3293,7 @@
+         for (f = 0; f < ir->node_count; ++f) {
+             IRNode *fn = &ir->nodes[f];
+             int matches = 0;
++            int call_changed = 0;
+             int64_t arg;
+             if (!(fn->kind == N_FUNCTION || fn->kind == N_METHOD || fn->kind == N_CONSTRUCTOR || fn->kind == N_OPERATOR_FUNCTION)) continue;
+             if (call->resolved_name && *call->resolved_name && fn->qualified && *fn->qualified)
+@@ -2794,6 +3319,7 @@
+                                 str_free(&q);
+                             }
+                             changed = 1;
++                            call_changed = 1;
+                             break;
+                         }
+                         pi++;
+@@ -2801,7 +3327,7 @@
+                     param = pn->next_sibling;
+                 }
+             }
+-            if (changed) break;
++            if (call_changed) break;
+         }
+     }
+     return changed;
+@@ -2898,6 +3424,9 @@
+ }
+ 
+ 
++static void emit_source_range_with_properties(const IR *ir, Str *out, uint64_t begin, uint64_t end);
++static void emit_native_token_range(const IR *ir, Str *out, size_t begin_tok, size_t end_tok);
++
+ static void emit_unresolved_named_call(const IR *ir, const IRNode *call, Str *out) {
+     size_t open = SIZE_MAX, close = SIZE_MAX, i;
+     if (call->first_tok >= ir->tokens.n || call->last_tok >= ir->tokens.n) return;
+@@ -2989,10 +3518,13 @@
+             }
+         }
+         if (impossible) {
+-            /* Keep the CXXE call semantics best-effort rather than emitting an invalid ordering. */
+-            str_free(out);
+-            str_init(out);
+-            emit_unresolved_named_call(ir, call, out);
++            /* Keep the CXXE call semantics best-effort without destroying
++               source already emitted before this call. */
++            Str fallback;
++            str_init(&fallback);
++            emit_unresolved_named_call(ir, call, &fallback);
++            str_putn(out, fallback.data ? fallback.data : "", fallback.len);
++            str_free(&fallback);
+         } else {
+             int emitted = 0;
+             for (idx = 0; idx < pc; ++idx) {
+@@ -3020,8 +3552,19 @@
+                 }
+                 arg = &ir->nodes[chosen[idx]];
+                 if (emitted) str_put(out, ", ");
+-                if (arg->kind == N_NAMED_ARG) str_put(out, arg->value ? arg->value : "");
+-                else append_token_bytes(ir, out, (size_t)arg->first_tok, (size_t)arg->last_tok);
++                if (arg->kind == N_NAMED_ARG) {
++                    size_t eq = SIZE_MAX, q;
++                    for (q = (size_t)arg->first_tok; q <= (size_t)arg->last_tok && q < ir->tokens.n; ++q) {
++                        if (!strcmp(ir->tokens.v[q].text, "=")) { eq = q; break; }
++                    }
++                    if (eq != SIZE_MAX && eq < (size_t)arg->last_tok) {
++                        emit_native_token_range(ir, out, eq + 1, (size_t)arg->last_tok);
++                    } else {
++                        str_put(out, arg->value ? arg->value : "");
++                    }
++                } else {
++                    emit_native_token_range(ir, out, (size_t)arg->first_tok, (size_t)arg->last_tok);
++                }
+                 emitted = 1;
+             }
+         }
+@@ -3353,12 +3896,14 @@
+ 
+ static const IRNode *find_custom_decorator_def(const IR *ir, const char *name, const char *qualified_name) {
+     size_t i;
+-    for (i = 0; i < ir->node_count; ++i) {
+-        const IRNode *n = &ir->nodes[i];
+-        if (n->kind != N_CUSTOM_DECORATOR) continue;
+-        if (qualified_name && n->qualified && strcmp(n->qualified, qualified_name) == 0) return n;
++    IRNode fake;
++    memset(&fake, 0, sizeof(fake));
++    fake.name = (char *)name;
++    fake.qualified = (char *)qualified_name;
++    {
++        int64_t id = -1;
++        if (find_custom_decorator_use(ir, &fake, &id)) return id >= 0 ? &ir->nodes[id] : NULL;
+     }
+-    /* Backward-compatible fallback for older IRs which did not store qualified names. */
+     for (i = 0; i < ir->node_count; ++i) {
+         const IRNode *n = &ir->nodes[i];
+         if (n->kind == N_CUSTOM_DECORATOR && n->name && name && strcmp(n->name, name) == 0) return n;
+@@ -3405,16 +3950,6 @@
+     return 1;
+ }
+ 
+-static void emit_tokens_range_raw(const IR *ir, Str *out, size_t a, size_t b, const char *replace_name, size_t replace_tok) {
+-    size_t i;
+-    if (a > b || b >= ir->tokens.n) return;
+-    for (i = a; i <= b; ++i) {
+-        str_put(out, ir->tokens.v[i].trivia);
+-        if (i == replace_tok && replace_name) str_put(out, replace_name);
+-        else str_put(out, ir->tokens.v[i].text);
+-    }
+-}
+-
+ static void emit_tokens_range(const IR *ir, Str *out, size_t a, size_t b, const char *replace_name, size_t replace_tok) {
+     size_t i;
+     if (a > b || b >= ir->tokens.n) return;
+@@ -3433,7 +3968,8 @@
+             i > a && i + 1 <= b && i + 1 < ir->tokens.n &&
+             ir->tokens.v[i + 1].kind == TK_IDENTIFIER && property_read_context(ir, i, b)) {
+             int64_t pid = -1;
+-            if (find_property_by_name(ir, ir->tokens.v[i + 1].text, &pid)) {
++            if (resolve_property_for_member_ir(ir, i, ir->tokens.v[i - 1].text,
++                                                ir->tokens.v[i + 1].text, &pid)) {
+                 str_put(out, text);
+                 str_put(out, "get_");
+                 str_put(out, ir->nodes[pid].name ? ir->nodes[pid].name : ir->tokens.v[i + 1].text);
+@@ -3472,7 +4008,8 @@
+             i + 1 < ir->tokens.n && ir->tokens.v[i + 1].kind == TK_IDENTIFIER &&
+             ir->tokens.v[i + 1].byte_start < end) {
+             int64_t pid = -1;
+-            if (find_property_by_name(ir, ir->tokens.v[i + 1].text, &pid)) {
++            if (resolve_property_for_member_ir(ir, i, ir->tokens.v[i - 1].text,
++                                                ir->tokens.v[i + 1].text, &pid)) {
+                 str_put(out, t->text);
+                 str_put(out, "get_");
+                 str_put(out, ir->nodes[pid].name ? ir->nodes[pid].name : ir->tokens.v[i + 1].text);
+@@ -3836,25 +4373,57 @@
+     }
+ }
+ 
+-static void emit_property_block(const IR *ir, const IRNode *block, Str *out) {
++static int property_assign_token(const Token *t) {
++    if (!t) return 0;
++    return !strcmp(t->text,"=") || !strcmp(t->text,"+=") || !strcmp(t->text,"-=") ||
++           !strcmp(t->text,"*=") || !strcmp(t->text,"/=") || !strcmp(t->text,"%=") ||
++           !strcmp(t->text,"&=") || !strcmp(t->text,"|=") || !strcmp(t->text,"^=") ||
++           !strcmp(t->text,"<<=") || !strcmp(t->text,">>=");
++}
++
++static void emit_property_block(const IR *ir, const IRNode *block, const IRNode *prop, int is_setter, Str *out) {
+     size_t a=(size_t)block->first_tok,b=(size_t)block->last_tok,i,open=SIZE_MAX;
++    const char *name = prop && prop->name ? prop->name : NULL;
+     for(i=a;i<=b && i<ir->tokens.n;++i) if(!strcmp(ir->tokens.v[i].text,"{")){open=i;break;}
+     if(open==SIZE_MAX || b<=open) return;
+-    emit_tokens_range_raw(ir,out,open+1,b-1,NULL,SIZE_MAX);
++    for(i=open+1;i<=b-1;++i){
++        const Token *t=&ir->tokens.v[i];
++        const Token *prev = i > open + 1 ? &ir->tokens.v[i-1] : NULL;
++        const Token *prev2 = i > open + 2 ? &ir->tokens.v[i-2] : NULL;
++        const Token *next = i + 1 < b ? &ir->tokens.v[i+1] : NULL;
++        str_put(out,t->trivia);
++        if(is_setter && t->kind==TK_IDENTIFIER && !strcmp(t->text,"value")) {
++            int is_this_member = prev && !strcmp(prev->text,"->") && prev2 && !strcmp(prev2->text,"this");
++            int is_field_write = next && (property_assign_token(next) || !strcmp(next->text,"++") || !strcmp(next->text,"--"));
++            if(name && !strcmp(name,"value") && !is_this_member && is_field_write) {
++                str_put(out,"this->value");
++            } else {
++                str_put(out,"CXXEPropertyAssignedValue");
++            }
++            continue;
++        }
++        if(name && *name && t->kind==TK_IDENTIFIER && !strcmp(t->text,name)){
++            str_put(out,"this->");
++            str_put(out,name);
++        } else {
++            str_put(out,t->text);
++        }
++    }
+ }
+ 
+ static void emit_property(const IR *ir, const IRNode *prop, Str *out) {
+     int64_t g=property_child_kind(ir,prop,N_PROPERTY_GET), s=property_child_kind(ir,prop,N_PROPERTY_SET);
+     const char *name=prop->name?prop->name:"Property";
+-    if(g>=0){ str_put(out,"decltype(auto) get_"); str_put(out,name); str_put(out,"() {"); emit_property_block(ir,&ir->nodes[g],out); str_put(out,"}\n"); }
+-    if(s>=0){ str_put(out,"template <typename CXXEPropertyValue>\nvoid set_"); str_put(out,name); str_put(out,"(CXXEPropertyValue&& value) {"); emit_property_block(ir,&ir->nodes[s],out); str_put(out,"}\n"); }
++    if(g>=0){ str_put(out,"decltype(auto) get_"); str_put(out,name); str_put(out,"() {"); emit_property_block(ir,&ir->nodes[g],prop,0,out); str_put(out,"}\n"); }
++    if(s>=0){ str_put(out,"template <typename CXXEPropertyValue>\nvoid set_"); str_put(out,name); str_put(out,"(CXXEPropertyValue&& CXXEPropertyAssignedValue) {"); emit_property_block(ir,&ir->nodes[s],prop,1,out); str_put(out,"}\n"); }
+ }
+ 
+ static int property_access_is_write(const IR *ir, const IRNode *node) {
+     size_t i=(size_t)node->last_tok+1;
+     if (i>=ir->tokens.n) return 0;
+     return !strcmp(ir->tokens.v[i].text,"=") || !strcmp(ir->tokens.v[i].text,"+=") || !strcmp(ir->tokens.v[i].text,"-=") ||
+-           !strcmp(ir->tokens.v[i].text,"*=") || !strcmp(ir->tokens.v[i].text,"/=") || !strcmp(ir->tokens.v[i].text,"%=");
++           !strcmp(ir->tokens.v[i].text,"*=") || !strcmp(ir->tokens.v[i].text,"/=") || !strcmp(ir->tokens.v[i].text,"%=") ||
++           !strcmp(ir->tokens.v[i].text,"++") || !strcmp(ir->tokens.v[i].text,"--");
+ }
+ 
+ static void emit_property_access(const IR *ir, const IRNode *node, Str *out) {
+@@ -3882,9 +4451,13 @@
+         const char*t=ir->tokens.v[i].text;
+         if(!strcmp(t,"("))par++; else if(!strcmp(t,")")&&par)par--; else if(!strcmp(t,"["))br++; else if(!strcmp(t,"]")&&br)br--; else if(!strcmp(t,"{"))cur++; else if(!strcmp(t,"}")&&cur)cur--;
+         else if(!par&&!br&&!cur&&!strcmp(t,";")) top_semis++;
+-        else if(!par&&!br&&!cur&&!strcmp(t,"=")&&op==SIZE_MAX&&i>a&&ir->tokens.v[i-1].kind==TK_IDENTIFIER){
++        else if(!par&&!br&&!cur&&op==SIZE_MAX&&i>a&&ir->tokens.v[i-1].kind==TK_IDENTIFIER &&
++                ( !strcmp(t,"=") || !strcmp(t,"+=") || !strcmp(t,"-=") || !strcmp(t,"*=") ||
++                  !strcmp(t,"/=") || !strcmp(t,"%=") || !strcmp(t,"&=") || !strcmp(t,"|=") ||
++                  !strcmp(t,"^=") || !strcmp(t,"<<=") || !strcmp(t,">>="))){
+             size_t pn=i-1;
+-            if(pn>a && (!strcmp(ir->tokens.v[pn-1].text,".")||!strcmp(ir->tokens.v[pn-1].text,"->")) && find_property_by_name(ir,ir->tokens.v[pn].text,&pid)){
++            if(pn>a && (!strcmp(ir->tokens.v[pn-1].text,".")||!strcmp(ir->tokens.v[pn-1].text,"->")) &&
++               resolve_property_for_member_ir(ir, pn - 1, ir->tokens.v[pn - 2].text, ir->tokens.v[pn].text, &pid)){
+                 op=i; sep=pn-1;
+             }
+         }
+@@ -3896,23 +4469,73 @@
+     return 1;
+ }
+ 
++static void emit_property_unary(const IR *ir, const IRNode *node, Str *out) {
++    size_t a=(size_t)node->first_tok,b=(size_t)node->last_tok;
++    const IRNode *prop;
++    const char *op;
++    size_t sep=SIZE_MAX;
++    int prefix;
++    if (node->aux >= ir->node_count) { append_token_bytes(ir,out,a,b); return; }
++    prop=&ir->nodes[node->aux];
++    op=node->name ? node->name : ((a < ir->tokens.n) ? ir->tokens.v[a].text : "");
++    prefix = a < ir->tokens.n && (!strcmp(ir->tokens.v[a].text,"++") || !strcmp(ir->tokens.v[a].text,"--"));
++    if (prefix) {
++        if (b < a + 3) { append_token_bytes(ir,out,a,b); return; }
++        sep = a + 2;
++        if (sep >= ir->tokens.n || (strcmp(ir->tokens.v[sep].text,".") && strcmp(ir->tokens.v[sep].text,"->"))) { append_token_bytes(ir,out,a,b); return; }
++        if (!property_has_get(ir,prop) || !property_has_set(ir,prop))
++            die("CXXE: property '%s' needs both getter and setter for ++/--",prop->name?prop->name:"<unnamed>");
++        str_put(out,"([&]() { ");
++        append_token_bytes(ir,out,a+1,sep-1);
++        str_put(out,ir->tokens.v[sep].text); str_put(out,"set_"); str_put(out,prop->name); str_put(out,"(");
++        append_token_bytes(ir,out,a+1,sep-1);
++        str_put(out,ir->tokens.v[sep].text); str_put(out,"get_"); str_put(out,prop->name); str_put(out,"() ");
++        str_put(out,!strcmp(op,"++")?"+ 1":"- 1");
++        str_put(out,"); return ");
++        append_token_bytes(ir,out,a+1,sep-1);
++        str_put(out,ir->tokens.v[sep].text); str_put(out,"get_"); str_put(out,prop->name); str_put(out,"(); }())");
++    } else {
++        if (b < a + 3) { append_token_bytes(ir,out,a,b); return; }
++        sep = b - 2;
++        if (sep >= ir->tokens.n || (strcmp(ir->tokens.v[sep].text,".") && strcmp(ir->tokens.v[sep].text,"->"))) { append_token_bytes(ir,out,a,b); return; }
++        if (!property_has_get(ir,prop) || !property_has_set(ir,prop))
++            die("CXXE: property '%s' needs both getter and setter for ++/--",prop->name?prop->name:"<unnamed>");
++        str_put(out,"([&]() { auto __cxxe_old = ");
++        append_token_bytes(ir,out,a,sep-1);
++        str_put(out,ir->tokens.v[sep].text); str_put(out,"get_"); str_put(out,prop->name); str_put(out,"(); ");
++        append_token_bytes(ir,out,a,sep-1);
++        str_put(out,ir->tokens.v[sep].text); str_put(out,"set_"); str_put(out,prop->name); str_put(out,"(__cxxe_old ");
++        str_put(out,!strcmp(op,"++")?"+ 1":"- 1"); str_put(out,"); return __cxxe_old; }())");
++        if (b > a && !strcmp(ir->tokens.v[b].text,";")) str_ch(out,';');
++    }
++}
++
+ static void emit_property_assignment(const IR *ir, const IRNode *node, Str *out) {
+     size_t a=(size_t)node->first_tok,b=(size_t)node->last_tok,op=SIZE_MAX,sep=SIZE_MAX;
+     int64_t pid=-1;
++    const char *op_text;
+     if(!node_is_property_assignment(ir,node,&pid,&op,&sep)){ append_token_bytes(ir,out,a,b); return; }
+     if(!property_has_set(ir,&ir->nodes[pid])) die("CXXE: property '%s' has no setter",ir->nodes[pid].name?ir->nodes[pid].name:"<unnamed>");
++    op_text=ir->tokens.v[op].text;
+     append_token_bytes(ir,out,a,sep-1);
+     str_put(out,ir->tokens.v[sep].text);
+     str_put(out,"set_"); str_put(out,ir->nodes[pid].name?ir->nodes[pid].name:"Property"); str_ch(out,'(');
++    if(strcmp(op_text,"=")!=0){
++        size_t n;
++        if(!property_has_get(ir,&ir->nodes[pid])) die("CXXE: property '%s' needs a getter for compound assignment '%s'",ir->nodes[pid].name?ir->nodes[pid].name:"<unnamed>",op_text);
++        append_token_bytes(ir,out,a,sep-1);
++        str_put(out,ir->tokens.v[sep].text); str_put(out,"get_"); str_put(out,ir->nodes[pid].name?ir->nodes[pid].name:"Property"); str_put(out,"()");
++        n=strlen(op_text); if(n && op_text[n-1]=='=') n--;
++        str_put(out," "); if(n) str_putn(out,op_text,n); str_put(out," ");
++    }
+     if(op+1<=b){
+         size_t rhs_b=b;
+         if(rhs_b>=a && !strcmp(ir->tokens.v[rhs_b].text,";")) rhs_b--;
+-        if(op+1<=rhs_b) append_token_bytes(ir,out,op+1,rhs_b);
++        if(op+1<=rhs_b) emit_native_token_range(ir,out,op+1,rhs_b);
+     }
+     str_ch(out,')');
+     if(b>=a && !strcmp(ir->tokens.v[b].text,";")) str_ch(out,';');
+ }
+-
+ static void emit_function_with_custom_decorators(const IR *ir, const IRNode *fn, Str *out) {
+     int64_t custom_ids[64];
+     size_t custom_count = 0, i;
+@@ -3936,7 +4559,7 @@
+         snprintf(base_name, sizeof(base_name), "%s__cxxe_impl_%" PRIu64, fn->name ? fn->name : "function", (uint64_t)(fn - ir->nodes));
+         emit_tokens_range(ir, out, (size_t)fn->first_tok, body_open - 1, base_name, name_tok);
+         str_put(out, " {");
+-        if (body_open + 1 <= (size_t)fn->last_tok) emit_tokens_range(ir, out, body_open + 1, (size_t)fn->last_tok - 1, NULL, SIZE_MAX);
++        if (body_open + 1 <= (size_t)fn->last_tok) emit_native_token_range(ir, out, body_open + 1, (size_t)fn->last_tok - 1);
+         str_put(out, "}\n\n");
+ 
+         /* Apply decorators from nearest-to-function outward. The first written
+@@ -4019,8 +4642,10 @@
+     if (n->kind == N_DECORATOR) return 1;
+     if (n->kind == N_CUSTOM_DECORATOR) return 1;
+     if (n->kind == N_PROPERTY) return 1;
++    if (n->kind == N_UNARY_EXPR && n->name && (!strcmp(n->name,"++") || !strcmp(n->name,"--"))) return 1;
+     if (n->kind == N_PROPERTY_ACCESS) return !property_access_is_write(ir, n);
+-    if (n->kind == N_ASSIGN_EXPR) return node_is_property_assignment(ir, n, NULL, NULL, NULL);
++    if (n->kind == N_ASSIGN_EXPR) return node_is_property_assignment(ir, n, NULL, NULL, NULL) ||
++        (n->name && (!strcmp(n->name,"++") || !strcmp(n->name,"--")));
+     if ((n->kind == N_FUNCTION || n->kind == N_METHOD) && function_has_custom_decorator(ir, n)) return 1;
+     if (n->kind == N_GET_MEMBER) return 1;
+     if (n->kind == N_FUNC_CALL && node_is_factory_runtime_call(n)) return 1;
+@@ -4029,19 +4654,116 @@
+     return 0;
+ }
+ 
++static void emit_native_token_range(const IR *ir, Str *out, size_t begin_tok, size_t end_tok) {
++    size_t i, native_count = 0, cursor_tok = begin_tok;
++    size_t *native_ids = NULL;
++    if (begin_tok > end_tok || begin_tok >= ir->tokens.n) return;
++    if (end_tok >= ir->tokens.n) end_tok = ir->tokens.n - 1;
++
++    for (i = 0; i < ir->node_count; ++i) {
++        const IRNode *n = &ir->nodes[i];
++        if (!node_needs_native_emit(ir, n)) continue;
++        if (n->flags & NF_EXTERNAL_DECL) continue;
++        if (n->first_tok < begin_tok || n->last_tok > end_tok || n->first_tok > n->last_tok) continue;
++        native_ids = (size_t *)xrealloc(native_ids, (native_count + 1) * sizeof(*native_ids));
++        native_ids[native_count++] = i;
++    }
++
++    for (i = 1; i < native_count; ++i) {
++        size_t key = native_ids[i], j = i;
++        while (j > 0) {
++            size_t prev = native_ids[j - 1];
++            if (ir->nodes[prev].first_tok < ir->nodes[key].first_tok ||
++                (ir->nodes[prev].first_tok == ir->nodes[key].first_tok &&
++                 ir->nodes[prev].last_tok <= ir->nodes[key].last_tok)) break;
++            native_ids[j] = prev;
++            --j;
++        }
++        native_ids[j] = key;
++    }
++
++    for (i = 0; i < native_count; ++i) {
++        const IRNode *n = &ir->nodes[native_ids[i]];
++        size_t first_tok = (size_t)n->first_tok;
++        size_t last_tok = (size_t)n->last_tok;
++        uint64_t bs;
++        if (first_tok < cursor_tok) continue;
++        if (first_tok > end_tok || last_tok > end_tok) continue;
++        if (first_tok > cursor_tok) {
++            uint64_t gb = ir->tokens.v[cursor_tok].byte_start;
++            uint64_t ge = ir->tokens.v[first_tok - 1].byte_end;
++            if (ge > gb) emit_source_range_with_properties(ir, out, gb, ge);
++        }
++        bs = ir->tokens.v[first_tok].byte_start;
++        if (n->kind == N_DECORATOR || n->kind == N_CUSTOM_DECORATOR) {
++            /* CXXE-only syntax disappears. */
++        } else if (n->kind == N_MATCH_STMT) {
++            emit_match_statement(ir, n, out);
++        } else if (n->kind == N_PROPERTY) {
++            emit_property(ir, n, out);
++        } else if (n->kind == N_UNARY_EXPR) {
++            emit_property_unary(ir, n, out);
++        } else if ((n->kind == N_FUNCTION || n->kind == N_METHOD) && function_has_custom_decorator(ir, n)) {
++            emit_function_with_custom_decorators(ir, n, out);
++        } else if (n->kind == N_PROPERTY_ACCESS) {
++            emit_property_access(ir, n, out);
++        } else if (n->kind == N_ASSIGN_EXPR) {
++            emit_property_assignment(ir, n, out);
++        } else if (n->kind == N_GET_MEMBER) {
++            emit_get_member_runtime(ir, n, out);
++        } else if (node_is_factory_runtime_call(n)) {
++            emit_factory_runtime(ir, n, out);
++        } else {
++            emit_named_call(ir, n, out);
++        }
++        (void)bs;
++        cursor_tok = last_tok + 1;
++    }
++    if (cursor_tok <= end_tok) {
++        uint64_t gb = ir->tokens.v[cursor_tok].byte_start;
++        uint64_t ge = ir->tokens.v[end_tok].byte_end;
++        if (ge > gb) emit_source_range_with_properties(ir, out, gb, ge);
++    }
++    free(native_ids);
++}
++
+ static void emit_cpp(const IR *ir, const char *path) {
+     Str out;
+-    size_t cursor = 0, i;
++    size_t cursor = 0, i, native_count = 0;
++    size_t *native_ids = NULL;
+     int runtime_features = class_has_runtime_features(ir);
+     str_init(&out);
++
++    /* Native nodes are created by several parser passes. In particular,
++       property-assignment nodes are intentionally discovered before generic
++       expression nodes, so IR creation order is not source order. The source
++       cursor below can only be correct when native emission is ordered by the
++       covered token range. */
++    for (i = 0; i < ir->node_count; ++i) {
++        if (!node_needs_native_emit(ir, &ir->nodes[i])) continue;
++        if (ir->nodes[i].flags & NF_EXTERNAL_DECL) continue;
++        if (ir->nodes[i].first_tok >= ir->tokens.n || ir->nodes[i].last_tok >= ir->tokens.n ||
++            ir->nodes[i].first_tok > ir->nodes[i].last_tok) continue;
++        native_ids = (size_t *)xrealloc(native_ids, (native_count + 1) * sizeof(*native_ids));
++        native_ids[native_count++] = i;
++    }
++    for (i = 1; i < native_count; ++i) {
++        size_t key = native_ids[i], j = i;
++        while (j > 0) {
++            size_t prev = native_ids[j - 1];
++            if (ir->nodes[prev].first_tok < ir->nodes[key].first_tok ||
++                (ir->nodes[prev].first_tok == ir->nodes[key].first_tok &&
++                 ir->nodes[prev].last_tok <= ir->nodes[key].last_tok)) break;
++            native_ids[j] = prev;
++            --j;
++        }
++        native_ids[j] = key;
++    }
+     if (runtime_features) {
+         str_put(&out, "#include \"cxxe_runtime.hpp\"\nnamespace cxxe_generated { static void register_all(); }\n");
+     }
+-    for (i = 0; i < ir->node_count; ++i) {
+-        const IRNode *n = &ir->nodes[i];
+-        if (!node_needs_native_emit(ir, n)) continue;
+-        if (n->flags & NF_EXTERNAL_DECL) continue;
+-        if (n->first_tok >= ir->tokens.n || n->last_tok >= ir->tokens.n || n->first_tok > n->last_tok) continue;
++    for (i = 0; i < native_count; ++i) {
++        const IRNode *n = &ir->nodes[native_ids[i]];
+         {
+             size_t first_tok = (size_t)n->first_tok;
+             size_t last_tok = (size_t)n->last_tok;
+@@ -4065,6 +4787,7 @@
+             if (n->kind == N_DECORATOR || n->kind == N_CUSTOM_DECORATOR) { /* CXXE-only syntax. */ }
+             else if (n->kind == N_MATCH_STMT) { emit_match_statement(ir, n, &out); }
+             else if (n->kind == N_PROPERTY) { emit_property(ir, n, &out); }
++            else if (n->kind == N_UNARY_EXPR) { emit_property_unary(ir, n, &out); }
+             else if ((n->kind == N_FUNCTION || n->kind == N_METHOD) && function_has_custom_decorator(ir, n)) {
+                 emit_function_with_custom_decorators(ir, n, &out);
+             }
+@@ -4085,6 +4808,7 @@
+     if (cursor < ir->source_size) emit_source_range_with_properties(ir, &out, cursor, (uint64_t)ir->source_size);
+     if (runtime_features) emit_registered_classes(ir, &out);
+     write_bytes(path, out.data ? out.data : "", out.len);
++    free(native_ids);
+     str_free(&out);
+ }
+ 

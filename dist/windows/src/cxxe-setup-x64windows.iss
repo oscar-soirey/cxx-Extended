@@ -26,7 +26,7 @@ InfoAfterFile=S:\Horizon\c++e\compiler\README.md
 ; Uncomment the following line to run in non administrative install mode (install for current user only).
 ;PrivilegesRequired=lowest
 OutputDir=S:\Horizon\c++e\compiler\dist\windows
-OutputBaseFilename=cxxe-x64windows-0.1
+OutputBaseFilename=cxxe-x64windows-{#MyAppVersion}
 SetupIconFile=S:\Horizon\c++e\com\icon.ico
 WizardImageFile=S:\Horizon\c++e\com\icon-white.bmp
 WizardSmallImageFile=S:\Horizon\c++e\com\icon-white.bmp

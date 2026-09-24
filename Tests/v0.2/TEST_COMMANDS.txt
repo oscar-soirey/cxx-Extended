@@ -1,0 +1,18 @@
+Final validation performed from /tmp/cxxe_work:
+
+Strict C build:
+  cc -std=c11 -Wall -Wextra -Werror -O2 cxxe_fixed.c -o cxxe_fixed_strict
+
+For every example:
+  cxxe_fixed parse example.cppe example.cpir
+  cxxe_fixed emit example.cpir example.cpp
+  g++ -std=c++17 -I/tmp/cxxe_work/runtime example.cpp /tmp/cxxe_work/runtime/cxxe_runtime.cpp -o example.exe
+  example.exe
+
+Sanitizer validation:
+  cxxe_fixed was built with -fsanitize=address,undefined
+  generated C++ and runtime were built with -fsanitize=address,undefined
+  ASAN_OPTIONS=detect_leaks=1
+  UBSAN_OPTIONS=halt_on_error=1
+
+cpp_regression.cppe intentionally exits 27; it is validated by successful parse/emit/compile and byte-identical source round-trip.

@@ -1,0 +1,14 @@
+#include <cstdio>
+
+dynamic choose_value() {
+    return 4;
+}
+
+int main() {
+    dynamic value = choose_value();
+    match value {
+        int: std::printf("int %d\n", value);
+        default: std::printf("other\n");
+    }
+    return 0;
+}

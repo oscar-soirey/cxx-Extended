@@ -1,0 +1,19 @@
+#include <cstdio>
+
+namespace Tools {
+void @wrap() -> func(int value) {
+    std::printf("before %d\n", value);
+    func(value);
+    std::printf("after %d\n", value);
+}
+
+@wrap
+void work(int value) {
+    std::printf("work %d\n", value);
+}
+}
+
+int main() {
+    Tools::work(3);
+    return 0;
+}

@@ -1,0 +1,17 @@
+@register
+class Box {
+public:
+    @exposed int value = 4;
+
+    @exposed int multiply(int factor) {
+        return value * factor;
+    }
+};
+
+int main() {
+    Box b;
+    b.get_member("value") = 6;
+    int v = (int)b.get_member("value");
+    int result = b.get_member("multiply")(5).as<int>();
+    return (v == 6 && result == 30) ? 0 : 1;
+}
