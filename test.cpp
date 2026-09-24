@@ -1,42 +1,56 @@
 #include "cxxe_runtime.hpp"
 namespace cxxe_generated { static void register_all(); }
 #include <iostream>
+#include "test.he"
 
- class A {
-public:
-	int life;
-	 int elife;
-	 void EShow() { std::cout << "Hello" << std::endl; }
-	void Show() { std::cout << "Hello" << std::endl; }
-};
 
-int main(int argc, char** argv) {
-	A* myclass = (cxxe_generated::register_all(), stde::factory_new(argv[1]));
-	(cxxe_generated::register_all(), stde::get_member(myclass, argv[2]))();
+namespace test {
+	class A {
+	public:
+		int health=10;
+
+		decltype(auto) get_health() { 
+				std::cout << "health get\n";
+				return health;}
+template <typename CXXEPropertyValue>
+void set_health(CXXEPropertyValue&& value) {
+				std::cout << "health set to: " << health << std::endl;
+				health = value;}
+
+	};
+
+	 enum class Color {
+		Red,
+		Green = 4,
+		Blue
+	};
+}
+
+
+int main(int argc, char** argv)
+{
+	using namespace test;
+	A mya{};
+	std::cout << mya.get_health() << std::endl;
+	mya.set_health(5);
+	
+	std::cout << stde::enum_to_string(Color::Green) << std::endl;
+	Color c = stde::string_to_enum<Color>("Green");
+	std::cout << stde::enum_has_value(c) << std::endl;
+	std::cout << stde::enum_has_name<Color>("Green") << std::endl;
+	std::vector<std::string> names = stde::enum_names<Color>();
+	auto info = stde::get_enum_info<Color>();
+	
 	return 0;
 }
 
 namespace cxxe_generated {
 static void register_all() {
     static const bool initialized = []() {
-        auto cxxe_class_3 = stde::register_class<A>("A");
-        cxxe_class_3.expose_field("elife",
-        [](void* self) -> stde::DynamicValue {
-            auto* obj = static_cast<A*>(self);
-            return stde::DynamicValue::from(obj->elife);
-        },
-        [](void* self, const std::any& value) {
-            auto* obj = static_cast<A*>(self);
-            using MemberType = std::decay_t<decltype(obj->elife)>;
-            obj->elife = std::any_cast<MemberType>(value);
-        });
-        cxxe_class_3.expose_method("EShow",
-        [](void* self, const std::vector<std::any>& args) -> stde::DynamicValue {
-            if (args.size() != 0) throw std::runtime_error("CXXE: invalid argument count for exposed method");
-            auto* obj = static_cast<A*>(self);
-            obj->EShow();
-            return stde::DynamicValue();
-        });
+        auto cxxe_enum_11 = stde::register_enum<test::Color>("test::Color");
+        cxxe_enum_11.value("Red", test::Color::Red);
+        cxxe_enum_11.value("Green", test::Color::Green);
+        cxxe_enum_11.value("Blue", test::Color::Blue);
         return true;
     }();
     (void)initialized;

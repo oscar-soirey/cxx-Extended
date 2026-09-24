@@ -1,15 +1,45 @@
 #include <iostream>
+#include "test.he"
 
-@register class A {
-public:
-	int life;
-	@exposed int elife;
-	@exposed void EShow() { std::cout << "Hello" << std::endl; }
-	void Show() { std::cout << "Hello" << std::endl; }
-};
 
-int main(int argc, char** argv) {
-	A* myclass = stde::factory_new(argv[1]);
-	myclass->get_member(argv[2])();
+namespace test {
+	class A {
+	public:
+		int health=10;
+
+		property Health {
+			get { 
+				std::cout << "health get\n";
+				return health;
+			}
+			set {
+				std::cout << "health set to: " << health << std::endl;
+				health = value;
+			}
+		}
+	};
+
+	@register enum class Color {
+		Red,
+		Green = 4,
+		Blue
+	};
+}
+
+
+int main(int argc, char** argv)
+{
+	using namespace test;
+	A mya{};
+	std::cout << mya.health << std::endl;
+	mya.health = 5;
+	
+	std::cout << stde::enum_to_string(Color::Green) << std::endl;
+	Color c = stde::string_to_enum<Color>("Green");
+	std::cout << stde::enum_has_value(c) << std::endl;
+	std::cout << stde::enum_has_name<Color>("Green") << std::endl;
+	std::vector<std::string> names = stde::enum_names<Color>();
+	auto info = stde::get_enum_info<Color>();
+	
 	return 0;
 }

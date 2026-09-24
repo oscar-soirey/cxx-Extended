@@ -93,6 +93,61 @@ struct ClassInfo {
     std::vector<std::shared_ptr<MemberInfo>> members;
 };
 
+struct EnumValueInfo {
+    std::string name;
+    std::any value;
+};
+
+struct EnumInfo {
+    std::string name;
+    std::type_index type = typeid(void);
+    std::vector<EnumValueInfo> values;
+};
+
+class EnumRegistry {
+    mutable std::mutex mutex_;
+    std::vector<std::shared_ptr<EnumInfo>> enums_;
+
+    EnumRegistry() = default;
+public:
+    EnumRegistry(const EnumRegistry&) = delete;
+    EnumRegistry& operator=(const EnumRegistry&) = delete;
+
+    static EnumRegistry& instance() {
+        static EnumRegistry registry;
+        return registry;
+    }
+
+    template <class E>
+    std::shared_ptr<EnumInfo> register_enum(std::string_view name) {
+        static_assert(std::is_enum_v<E>, "stde::register_enum requires an enum type");
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto& item : enums_) {
+            if (item->name == name && item->type == std::type_index(typeid(E))) {
+                item->values.clear();
+                return item;
+            }
+        }
+        auto item = std::make_shared<EnumInfo>();
+        item->name = std::string(name);
+        item->type = std::type_index(typeid(E));
+        enums_.push_back(item);
+        return item;
+    }
+
+    std::shared_ptr<EnumInfo> find(std::string_view name) const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (const auto& item : enums_) if (item->name == name) return item;
+        return {};
+    }
+
+    std::shared_ptr<EnumInfo> find_type(std::type_index type) const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (const auto& item : enums_) if (item->type == type) return item;
+        return {};
+    }
+};
+
 class Registry {
     mutable std::mutex mutex_;
     std::vector<std::shared_ptr<ClassInfo>> classes_;
@@ -189,8 +244,86 @@ ClassBuilder<T> register_class(std::string_view name) {
     return ClassBuilder<T>(Registry::instance().register_class<T>(name));
 }
 
-class FactoryResult {
-    void* pointer_ = nullptr;
+
+template <class E>
+class EnumBuilder {
+    std::shared_ptr<EnumInfo> info_;
+public:
+    explicit EnumBuilder(std::shared_ptr<EnumInfo> info) : info_(std::move(info)) {}
+
+    EnumBuilder& value(std::string_view name, E value) {
+        if (!info_) throw std::runtime_error("CXXE: invalid enum builder");
+        EnumValueInfo item;
+        item.name = std::string(name);
+        item.value = value;
+        info_->values.push_back(std::move(item));
+        return *this;
+    }
+};
+
+template <class E>
+EnumBuilder<E> register_enum(std::string_view name) {
+    return EnumBuilder<E>(EnumRegistry::instance().register_enum<E>(name));
+}
+
+template <class E>
+std::shared_ptr<EnumInfo> get_enum_info() {
+    static_assert(std::is_enum_v<E>, "stde::get_enum_info requires an enum type");
+    return EnumRegistry::instance().find_type(std::type_index(typeid(E)));
+}
+
+template <class E>
+std::string enum_to_string(E value) {
+    static_assert(std::is_enum_v<E>, "stde::enum_to_string requires an enum type");
+    auto info = get_enum_info<E>();
+    if (!info) throw std::runtime_error("CXXE: enum type is not registered");
+    for (const auto& item : info->values) {
+        if (std::any_cast<E>(item.value) == value) return item.name;
+    }
+    throw std::runtime_error("CXXE: enum value is not registered: " + std::to_string(static_cast<long long>(value)));
+}
+
+template <class E>
+E string_to_enum(std::string_view name) {
+    static_assert(std::is_enum_v<E>, "stde::string_to_enum requires an enum type");
+    auto info = get_enum_info<E>();
+    if (!info) throw std::runtime_error("CXXE: enum type is not registered");
+    for (const auto& item : info->values) {
+        if (item.name == name) return std::any_cast<E>(item.value);
+    }
+    throw std::runtime_error("CXXE: enum value not found: " + std::string(name));
+}
+
+template <class E>
+bool enum_has_value(E value) {
+    static_assert(std::is_enum_v<E>, "stde::enum_has_value requires an enum type");
+    auto info = get_enum_info<E>();
+    if (!info) return false;
+    for (const auto& item : info->values) if (std::any_cast<E>(item.value) == value) return true;
+    return false;
+}
+
+template <class E>
+bool enum_has_name(std::string_view name) {
+    static_assert(std::is_enum_v<E>, "stde::enum_has_name requires an enum type");
+    auto info = get_enum_info<E>();
+    if (!info) return false;
+    for (const auto& item : info->values) if (item.name == name) return true;
+    return false;
+}
+
+template <class E>
+std::vector<std::string> enum_names() {
+    static_assert(std::is_enum_v<E>, "stde::enum_names requires an enum type");
+    auto info = get_enum_info<E>();
+    if (!info) throw std::runtime_error("CXXE: enum type is not registered");
+    std::vector<std::string> result;
+    result.reserve(info->values.size());
+    for (const auto& item : info->values) result.push_back(item.name);
+    return result;
+}
+
+class FactoryResult {    void* pointer_ = nullptr;
     std::shared_ptr<ClassInfo> info_;
 public:
     FactoryResult() = default;

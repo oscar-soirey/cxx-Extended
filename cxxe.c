@@ -29,6 +29,12 @@
  * either reproduce exact source or regenerate selected nodes later.
  */
 
+#ifndef _WIN32
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+#endif
+
 #include <assert.h>
 #include <ctype.h>
 #include <errno.h>
@@ -39,8 +45,15 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <limits.h>
+#include <unistd.h>
+#endif
+
 #define CPIR_MAGIC "CPIR"
-#define CPIR_VERSION 6u
+#define CPIR_VERSION 9u
 #define ARRAY_GROW_MIN 64u
 
 /* ------------------------------------------------------------------------- */
@@ -283,9 +296,16 @@ static void lex_cpp(const uint8_t *src, size_t n, TokenVec *out) {
 
         /* Preprocessor directive: only if # is the first non-trivia byte on a line. */
         {
-            size_t ls = i;
+            size_t ls = i, only_hspace = 1;
             while (ls > 0 && src[ls - 1] != '\n') --ls;
-            if (src[i] == '#' && i == ls) {
+            {
+                size_t q = ls;
+                while (q < i) {
+                    if (src[q] != ' ' && src[q] != '\t' && src[q] != '\r' && src[q] != '\v' && src[q] != '\f') { only_hspace = 0; break; }
+                    q++;
+                }
+            }
+            if (src[i] == '#' && only_hspace) {
                 size_t j = i;
                 while (j < n) {
                     if (src[j] == '\\' && j + 1 < n && src[j + 1] == '\n') { j += 2; continue; }
@@ -412,6 +432,10 @@ typedef enum {
     N_WARNING_DIRECTIVE,
     N_ATTRIBUTE,
     N_DECORATOR,
+    N_DECORATOR_TEMPLATE,
+    N_DECORATOR_TEMPLATE_ARG,
+    N_CUSTOM_DECORATOR,
+    N_DECORATOR_TARGET,
     N_NAMESPACE,
     N_NAMESPACE_ALIAS,
     N_USING_DIRECTIVE,
@@ -435,6 +459,10 @@ typedef enum {
     N_ALIAS,
     N_FRIEND,
     N_FIELD_DECL,
+    N_PROPERTY,
+    N_PROPERTY_GET,
+    N_PROPERTY_SET,
+    N_PROPERTY_ACCESS,
     N_VAR_DECL,
     N_VAR_ASSIGN,
     N_FUNCTION,
@@ -501,6 +529,10 @@ typedef enum {
 #define NF_REGISTERED         0x00000800u
 #define NF_EXPOSED            0x00001000u
 #define NF_GET_MEMBER_RUNTIME 0x00002000u
+#define NF_DECORATOR_CUSTOM   0x00000080u
+#define NF_DECORATOR_VARIADIC 0x00000100u
+#define NF_EXTERNAL_DECL     0x00004000u
+#define NF_INCLUDE_NEXT      0x00008000u
 
 typedef struct {
     NodeKind kind;
@@ -586,11 +618,12 @@ static const char *node_kind_name(NodeKind k) {
         K(N_TRANSLATION_UNIT); K(N_RAW); K(N_PREPROCESSOR); K(N_INCLUDE); K(N_DEFINE);
         K(N_UNDEF); K(N_IFDEF); K(N_IFNDEF); K(N_IF); K(N_ELIF); K(N_ELSE); K(N_ENDIF);
         K(N_PRAGMA); K(N_ERROR_DIRECTIVE); K(N_WARNING_DIRECTIVE); K(N_ATTRIBUTE); K(N_DECORATOR);
+        K(N_DECORATOR_TEMPLATE); K(N_DECORATOR_TEMPLATE_ARG); K(N_CUSTOM_DECORATOR); K(N_DECORATOR_TARGET);
         K(N_NAMESPACE); K(N_NAMESPACE_ALIAS); K(N_USING_DIRECTIVE); K(N_USING_DECL);
         K(N_LINKAGE_SPEC); K(N_MODULE); K(N_IMPORT); K(N_EXPORT); K(N_CLASS); K(N_STRUCT);
         K(N_UNION); K(N_ENUM); K(N_ENUMERATOR); K(N_TEMPLATE); K(N_TEMPLATE_TYPE_PARAM);
         K(N_TEMPLATE_NON_TYPE_PARAM); K(N_TEMPLATE_TEMPLATE_PARAM); K(N_CONCEPT); K(N_REQUIRES);
-        K(N_TYPEDEF); K(N_ALIAS); K(N_FRIEND); K(N_FIELD_DECL); K(N_VAR_DECL); K(N_VAR_ASSIGN);
+        K(N_TYPEDEF); K(N_ALIAS); K(N_FRIEND); K(N_FIELD_DECL); K(N_PROPERTY); K(N_PROPERTY_GET); K(N_PROPERTY_SET); K(N_PROPERTY_ACCESS); K(N_VAR_DECL); K(N_VAR_ASSIGN);
         K(N_FUNCTION); K(N_METHOD); K(N_CONSTRUCTOR); K(N_DESTRUCTOR); K(N_CONVERSION_FUNCTION);
         K(N_OPERATOR_FUNCTION); K(N_PARAM_DECL); K(N_RETURN); K(N_IF_STMT); K(N_FOR_STMT);
         K(N_RANGE_FOR_STMT); K(N_WHILE_STMT); K(N_DO_STMT); K(N_SWITCH_STMT); K(N_CASE_STMT);
@@ -664,6 +697,10 @@ static int is_keyword(const char *s) {
 
 static int is_identifier(Parser *p, size_t i) {
     return pk(p, i) == TK_IDENTIFIER && !is_keyword(pt(p, i));
+}
+
+static int is_decorator_identifier(Parser *p, size_t i) {
+    return pk(p, i) == TK_IDENTIFIER || pk(p, i) == TK_PUNCT;
 }
 
 static size_t skip_balanced(Parser *p, size_t i, size_t end, const char *open, const char *close) {
@@ -817,28 +854,140 @@ static void parser_apply_pending(Parser *p, int64_t target) {
     p->pending_decorator_n = 0;
 }
 
+static size_t find_template_close_cpp(Parser *p, size_t open_i, size_t end_exclusive) {
+    size_t i;
+    int depth = 0;
+    if (open_i >= p->ir->tokens.n || !str_eq(pt(p, open_i), "<")) return SIZE_MAX;
+    for (i = open_i; i < end_exclusive && i < p->ir->tokens.n; ++i) {
+        const char *t = pt(p, i);
+        if (str_eq(t, "<")) depth++;
+        else if (str_eq(t, ">")) {
+            if (depth > 0) depth--;
+            if (depth == 0) return i;
+        } else if (str_eq(t, ">>")) {
+            if (depth <= 2) return i;
+            depth -= 2;
+        } else if (str_eq(t, ">>>")) {
+            if (depth <= 3) return i;
+            depth -= 3;
+        }
+    }
+    return SIZE_MAX;
+}
+
+static size_t split_template_args_parser(Parser *p, size_t a, size_t b,
+                                          size_t *starts, size_t *ends, size_t cap) {
+    size_t count = 0, start = a, i;
+    int par = 0, br = 0, cur = 0, angle = 0;
+    if (a > b) return 0;
+    for (i = a; i <= b; ++i) {
+        const char *t = pt(p, i);
+        if (str_eq(t, "(")) par++;
+        else if (str_eq(t, ")") && par) par--;
+        else if (str_eq(t, "[")) br++;
+        else if (str_eq(t, "]") && br) br--;
+        else if (str_eq(t, "{")) cur++;
+        else if (str_eq(t, "}") && cur) cur--;
+        else if (str_eq(t, "<")) angle++;
+        else if (str_eq(t, ">") && angle) angle--;
+        else if (str_eq(t, ">>")) angle -= angle >= 2 ? 2 : angle;
+        else if (str_eq(t, ">>>")) angle -= angle >= 3 ? 3 : angle;
+        else if (str_eq(t, ",") && par == 0 && br == 0 && cur == 0 && angle == 0) {
+            if (start <= i - 1 && count < cap) {
+                starts[count] = start;
+                ends[count] = i - 1;
+                count++;
+            }
+            start = i + 1;
+        }
+    }
+    if (start <= b && count < cap) {
+        starts[count] = start;
+        ends[count] = b;
+        count++;
+    }
+    return count;
+}
+
+static void parse_decorator_template_args(Parser *p, int64_t parent, size_t open, size_t close) {
+    int64_t tpl = ir_add_node(p->ir, N_DECORATOR_TEMPLATE, open, close, parent);
+    size_t starts[128], ends[128], n, i;
+    node_set_name(p->ir, tpl, "template_args");
+    node_set_value(p->ir, tpl, token_range_text(p, open, close));
+    ir_add_child(p->ir, parent, tpl);
+    if (close <= open + 1) return;
+    n = split_template_args_parser(p, open + 1, close - 1, starts, ends, 128);
+    for (i = 0; i < n; ++i) {
+        int64_t arg = ir_add_node(p->ir, N_DECORATOR_TEMPLATE_ARG, starts[i], ends[i], tpl);
+        node_set_value(p->ir, arg, token_range_text(p, starts[i], ends[i]));
+        ir_add_child(p->ir, tpl, arg);
+    }
+}
+
+static void parse_custom_decorator_template_decl(Parser *p, int64_t parent,
+                                                  size_t template_i, size_t template_close) {
+    int64_t tpl = ir_add_node(p->ir, N_TEMPLATE, template_i, template_close, parent);
+    size_t open = template_i + 1, starts[128], ends[128], n = 0, i;
+    node_set_value(p->ir, tpl, token_range_text(p, template_i, template_close));
+    ir_add_child(p->ir, parent, tpl);
+    while (open < template_close && !str_eq(pt(p, open), "<")) open++;
+    if (open >= template_close || template_close <= open + 1) return;
+    n = split_template_args_parser(p, open + 1, template_close - 1, starts, ends, 128);
+    for (i = 0; i < n; ++i) {
+        size_t aa = starts[i], bb = ends[i], j;
+        NodeKind k = N_TEMPLATE_NON_TYPE_PARAM;
+        const char *name = NULL;
+        if (str_eq(pt(p, aa), "typename") || str_eq(pt(p, aa), "class")) k = N_TEMPLATE_TYPE_PARAM;
+        else if (str_eq(pt(p, aa), "template")) k = N_TEMPLATE_TEMPLATE_PARAM;
+        for (j = bb + 1; j-- > aa;) {
+            if (is_identifier(p, j)) { name = pt(p, j); break; }
+            if (j == aa) break;
+        }
+        {
+            int64_t pn = ir_add_node(p->ir, k, aa, bb, tpl);
+            if (name) node_set_name(p->ir, pn, name);
+            node_set_value(p->ir, pn, token_range_text(p, aa, bb));
+            if (k == N_TEMPLATE_TYPE_PARAM) node_set_type(p->ir, pn, pt(p, aa));
+            ir_add_child(p->ir, tpl, pn);
+        }
+    }
+}
+
 static size_t parse_one_decorator(Parser *p, size_t a, size_t b) {
-    size_t i = a + 1, end;
-    if (i > b || pk(p, i) != TK_IDENTIFIER) return a;
+    size_t i = a + 1, end, name_end;
+    char *spelling = NULL, *qualified = NULL;
+    if (i > b || !is_decorator_identifier(p, i)) return a;
     end = i;
-    if (i + 1 <= b && str_eq(pt(p, i + 1), "::")) {
-        while (end + 2 <= b && str_eq(pt(p, end + 1), "::") && pk(p, end + 2) == TK_IDENTIFIER) end += 2;
+    while (end + 2 <= b && str_eq(pt(p, end + 1), "::") && is_decorator_identifier(p, end + 2)) end += 2;
+    name_end = end;
+    if (end + 1 <= b && str_eq(pt(p, end + 1), "<")) {
+        size_t tc = find_template_close_cpp(p, end + 1, b + 1);
+        if (tc == SIZE_MAX) return a;
+        end = tc;
     }
     if (end + 1 <= b && str_eq(pt(p, end + 1), "(")) {
-        end = find_matching(p, end + 1, b + 1);
+        size_t pc = find_matching(p, end + 1, b + 1);
+        if (pc > b) return a;
+        end = pc;
     }
+    spelling = join_qualified(p, i, name_end);
+    qualified = scope_qualified(p, spelling);
     {
         int64_t n = ir_add_node(p->ir, N_DECORATOR, a, end, -1);
         p->ir->nodes[n].aux = UINT64_MAX;
-        node_set_name(p->ir, n, join_qualified(p, i, end));
-        node_set_qualified(p->ir, n, p->ir->nodes[n].name);
+        node_set_name(p->ir, n, spelling);
+        node_set_qualified(p->ir, n, qualified);
         node_set_value(p->ir, n, token_range_text(p, a, end));
+        if (name_end + 1 <= end && str_eq(pt(p, name_end + 1), "<")) {
+            size_t tc = find_template_close_cpp(p, name_end + 1, end + 1);
+            if (tc != SIZE_MAX) parse_decorator_template_args(p, n, name_end + 1, tc);
+        }
+        free(spelling); free(qualified);
         if (str_eq(p->ir->nodes[n].name, "register") || str_eq(p->ir->nodes[n].name, "exposed")) {
             p->ir->nodes[n].flags |= NF_DECORATOR_NATIVE;
             if (str_eq(p->ir->nodes[n].name, "register")) p->ir->nodes[n].flags |= NF_DECORATOR_REGISTER;
             else p->ir->nodes[n].flags |= NF_DECORATOR_EXPOSED;
         }
-        /* Parent is assigned when the following declaration is known. */
         p->ir->nodes[n].parent = -1;
         parser_pending_push(p, n);
     }
@@ -985,6 +1134,8 @@ static void parse_call_arguments(Parser *p, int64_t call, size_t a, size_t b) {
     }
 }
 
+static int find_property_by_name(const IR *ir, const char *name, int64_t *out_id);
+
 static void add_expr_nodes(Parser *p, int64_t parent, size_t a, size_t b) {
     IR *ir = p->ir;
     size_t i;
@@ -1012,6 +1163,16 @@ static void add_expr_nodes(Parser *p, int64_t parent, size_t a, size_t b) {
             int64_t n = ir_add_node(ir, N_LITERAL, i, i, parent);
             node_set_value(ir, n, t);
             ir_add_child(ir, parent, n);
+        } else if ((str_eq(t, ".") || str_eq(t, "->")) && i + 1 <= b && pk(p, i + 1) == TK_IDENTIFIER) {
+            int64_t prop = -1;
+            if (i > a && find_property_by_name(ir, pt(p, i + 1), &prop)) {
+                int64_t n = ir_add_node(ir, N_PROPERTY_ACCESS, i - 1, i + 1, parent);
+                node_set_name(ir, n, pt(p, i + 1));
+                node_set_qualified(ir, n, ir->nodes[prop].qualified);
+                ir->nodes[n].aux = (uint64_t)prop;
+                node_set_value(ir, n, token_range_text(p, i - 1, i + 1));
+                ir_add_child(ir, parent, n);
+            }
         } else if (is_identifier(p, i)) {
             /* CXXE native member intrinsic: object.get_member("name").
                Represent the whole intrinsic call so the backend can replace it
@@ -1154,6 +1315,10 @@ static void parse_parameters(Parser *p, int64_t fn, size_t a, size_t b) {
     }
 }
 
+static void parse_region_items(Parser *p, size_t a, size_t b, int64_t parent, int class_context, const char *class_name);
+
+static void add_property_assignment_nodes_in_range(Parser *p, int64_t parent, size_t a, size_t b);
+
 static int parse_function_like(Parser *p, size_t a, size_t b, int64_t parent, const char *class_name, size_t open_paren, int64_t *out_fn) {
     size_t close_paren, k, name_i = SIZE_MAX;
     NodeKind kind = N_FUNCTION;
@@ -1201,19 +1366,31 @@ static int parse_function_like(Parser *p, size_t a, size_t b, int64_t parent, co
 
     name = xstrdup0(pt(p, name_i));
     qual = scope_qualified(p, name);
-    fn = ir_add_node(p->ir, kind, a, b, parent);
-    node_set_name(p->ir, fn, name);
-    node_set_qualified(p->ir, fn, qual);
-    if (kind == N_OPERATOR_FUNCTION) node_set_resolved(p->ir, fn, qual);
-    if (name_i > a) node_set_return(p->ir, fn, token_range_text(p, a, name_i - 1));
-    parse_parameters(p, fn, open_paren + 1, close_paren - 1);
-    if (close_paren + 1 <= b && str_eq(pt(p, close_paren + 1), "{")) {
-        size_t close = find_matching(p, close_paren + 1, b + 1);
-        if (close <= b) {
-            add_expr_nodes(p, fn, close_paren + 2, close ? close - 1 : close);
+    {
+        size_t function_last = b;
+        fn = ir_add_node(p->ir, kind, a, b, parent);
+        node_set_name(p->ir, fn, name);
+        node_set_qualified(p->ir, fn, qual);
+        if (kind == N_OPERATOR_FUNCTION) node_set_resolved(p->ir, fn, qual);
+        if (name_i > a) node_set_return(p->ir, fn, token_range_text(p, a, name_i - 1));
+        parse_parameters(p, fn, open_paren + 1, close_paren - 1);
+        if (close_paren + 1 <= b && str_eq(pt(p, close_paren + 1), "{")) {
+            size_t close = find_matching(p, close_paren + 1, b + 1);
+            if (close <= b) {
+                function_last = close;
+                p->ir->nodes[fn].last_tok = close;
+                if (close_paren + 2 <= close - 1) {
+                    /* Insert property assignment nodes before the generic expression
+                       nodes so emission order follows source order when reads and
+                       writes overlap the same statement range. */
+                    add_property_assignment_nodes_in_range(p, fn, close_paren + 2, close - 1);
+                    add_expr_nodes(p, fn, close_paren + 2, close - 1);
+                }
+            }
         }
+        p->ir->nodes[fn].last_tok = function_last;
+        ir_add_child(p->ir, parent, fn);
     }
-    ir_add_child(p->ir, parent, fn);
     if (out_fn) *out_fn = fn;
     free(name); free(qual);
     return 1;
@@ -1239,45 +1416,75 @@ static void parse_attributes(Parser *p, size_t a, size_t b, int64_t parent) {
 
 static char *xstrndup0(const char *s, size_t n);
 
-static NodeKind pp_kind(const char *s) {
+static const char *pp_keyword(const char *s) {
     const char *p = s;
+    static char kw[64];
+    size_t n = 0;
     while (*p && *p != '#') p++;
     if (*p == '#') p++;
     while (*p && isspace((unsigned char)*p)) p++;
-    if (strncmp(p, "include", 7) == 0) return N_INCLUDE;
-    if (strncmp(p, "define", 6) == 0) return N_DEFINE;
-    if (strncmp(p, "undef", 5) == 0) return N_UNDEF;
-    if (strncmp(p, "ifdef", 5) == 0) return N_IFDEF;
-    if (strncmp(p, "ifndef", 6) == 0) return N_IFNDEF;
-    if (strncmp(p, "if", 2) == 0) return N_IF;
-    if (strncmp(p, "elif", 4) == 0) return N_ELIF;
-    if (strncmp(p, "else", 4) == 0) return N_ELSE;
-    if (strncmp(p, "endif", 5) == 0) return N_ENDIF;
-    if (strncmp(p, "pragma", 6) == 0) return N_PRAGMA;
-    if (strncmp(p, "error", 5) == 0) return N_ERROR_DIRECTIVE;
-    if (strncmp(p, "warning", 7) == 0) return N_WARNING_DIRECTIVE;
-    if (strncmp(p, "module", 6) == 0) return N_MODULE;
-    if (strncmp(p, "import", 6) == 0) return N_IMPORT;
-    if (strncmp(p, "export", 6) == 0) return N_EXPORT;
+    while (*p && !isspace((unsigned char)*p) && n + 1 < sizeof(kw)) {
+        kw[n++] = *p++;
+    }
+    kw[n] = 0;
+    return kw;
+}
+
+static NodeKind pp_kind(const char *s) {
+    const char *p = pp_keyword(s);
+    if (strcmp(p, "include") == 0 || strcmp(p, "include_next") == 0) return N_INCLUDE;
+    if (strcmp(p, "define") == 0) return N_DEFINE;
+    if (strcmp(p, "undef") == 0) return N_UNDEF;
+    if (strcmp(p, "ifdef") == 0) return N_IFDEF;
+    if (strcmp(p, "ifndef") == 0) return N_IFNDEF;
+    if (strcmp(p, "if") == 0) return N_IF;
+    if (strcmp(p, "elif") == 0 || strcmp(p, "elifdef") == 0 || strcmp(p, "elifndef") == 0) return N_ELIF;
+    if (strcmp(p, "else") == 0) return N_ELSE;
+    if (strcmp(p, "endif") == 0) return N_ENDIF;
+    if (strcmp(p, "pragma") == 0) return N_PRAGMA;
+    if (strcmp(p, "error") == 0) return N_ERROR_DIRECTIVE;
+    if (strcmp(p, "warning") == 0) return N_WARNING_DIRECTIVE;
+    if (strcmp(p, "module") == 0) return N_MODULE;
+    if (strcmp(p, "import") == 0) return N_IMPORT;
+    if (strcmp(p, "export") == 0) return N_EXPORT;
     return N_PREPROCESSOR;
 }
 
 static void parse_preprocessor(Parser *p, size_t i, int64_t parent) {
     int64_t n = ir_add_node(p->ir, pp_kind(pt(p, i)), i, i, parent);
-    node_set_value(p->ir, n, pt(p, i));
-    {
-        const char *raw = pt(p, i);
+    const char *raw = pt(p, i);
+    const char *kw = pp_keyword(raw);
+    node_set_value(p->ir, n, raw);
+    if (strcmp(kw, "include") == 0 || strcmp(kw, "include_next") == 0 || strcmp(kw, "import") == 0) {
+        const char *q = raw;
+        while (*q && *q != '#') q++;
+        if (*q == '#') q++;
+        while (*q && isspace((unsigned char)*q)) q++;
+        while (*q && !isspace((unsigned char)*q)) q++;
+        while (*q && isspace((unsigned char)*q)) q++;
+        if (*q == '"') {
+            const char *e = strchr(q + 1, '"');
+            if (e) node_set_name(p->ir, n, xstrndup0(q + 1, (size_t)(e - (q + 1))));
+        } else if (*q == '<') {
+            const char *e = strchr(q + 1, '>');
+            if (e) node_set_name(p->ir, n, xstrndup0(q + 1, (size_t)(e - (q + 1))));
+        } else if (*q) {
+            const char *e = q;
+            while (*e && !isspace((unsigned char)*e)) e++;
+            node_set_name(p->ir, n, xstrndup0(q, (size_t)(e - q)));
+        }
+        if (strcmp(kw, "include_next") == 0) p->ir->nodes[n].flags |= NF_INCLUDE_NEXT;
+    } else if (strcmp(kw, "define") == 0) {
         const char *q = raw;
         while (*q && *q != '#') q++;
         if (*q) q++;
         while (*q && isspace((unsigned char)*q)) q++;
-        if (strncmp(q, "define", 6) == 0) {
-            q += 6; while (*q && isspace((unsigned char)*q)) q++;
-            {
-                const char *name_start = q;
-                while (*q && (isalnum((unsigned char)*q) || *q == '_')) q++;
-                if (q > name_start) node_set_name(p->ir, n, xstrndup0(name_start, (size_t)(q - name_start)));
-            }
+        q += 6;
+        while (*q && isspace((unsigned char)*q)) q++;
+        {
+            const char *name_start = q;
+            while (*q && (isalnum((unsigned char)*q) || *q == '_')) q++;
+            if (q > name_start) node_set_name(p->ir, n, xstrndup0(name_start, (size_t)(q - name_start)));
         }
     }
     ir_add_child(p->ir, parent, n);
@@ -1329,6 +1536,126 @@ static void mark_access(IR *ir, int64_t node, int access) {
     ir->nodes[node].flags = (ir->nodes[node].flags & ~NF_ACCESS_MASK) | (uint32_t)access;
 }
 
+static int64_t property_child_kind(const IR *ir, const IRNode *prop, NodeKind kind) {
+    int64_t c;
+    for (c = prop->first_child; c >= 0; c = ir->nodes[c].next_sibling)
+        if (ir->nodes[c].kind == kind) return c;
+    return -1;
+}
+
+static int property_has_get(const IR *ir, const IRNode *prop) { return property_child_kind(ir, prop, N_PROPERTY_GET) >= 0; }
+static int property_has_set(const IR *ir, const IRNode *prop) { return property_child_kind(ir, prop, N_PROPERTY_SET) >= 0; }
+
+static int parse_property(Parser *p, size_t a, size_t b, int64_t cls, int access, size_t *end_out) {
+    size_t name_i, brace, close, i;
+    if (a > b || !str_eq(pt(p, a), "property") || a + 1 > b || !is_identifier(p, a + 1)) return 0;
+    name_i = a + 1;
+    brace = name_i + 1;
+    if (brace > b || !str_eq(pt(p, brace), "{")) return 0;
+    close = find_matching(p, brace, b + 1);
+    if (close > b) return 0;
+    {
+        int64_t prop = ir_add_node(p->ir, N_PROPERTY, a, close, cls);
+        node_set_name(p->ir, prop, pt(p, name_i));
+        node_set_qualified(p->ir, prop, scope_qualified(p, pt(p, name_i)));
+        node_set_value(p->ir, prop, token_range_text(p, a, close));
+        mark_access(p->ir, prop, access);
+        ir_add_child(p->ir, cls, prop);
+        for (i = brace + 1; i < close; ) {
+            if ((str_eq(pt(p, i), "get") || str_eq(pt(p, i), "set")) && i + 1 < close && str_eq(pt(p, i + 1), "{")) {
+                size_t oc = find_matching(p, i + 1, close + 1);
+                if (oc <= close) {
+                    NodeKind nk = str_eq(pt(p, i), "get") ? N_PROPERTY_GET : N_PROPERTY_SET;
+                    int64_t child = ir_add_node(p->ir, nk, i, oc, prop);
+                    node_set_name(p->ir, child, pt(p, i));
+                    node_set_value(p->ir, child, token_range_text(p, i, oc));
+                    ir_add_child(p->ir, prop, child);
+                    i = oc + 1;
+                    continue;
+                }
+            }
+            i++;
+        }
+        if (!property_has_get(p->ir, &p->ir->nodes[prop]) && !property_has_set(p->ir, &p->ir->nodes[prop]))
+            die("property '%s' must contain at least a get or set block", pt(p, name_i));
+        parser_apply_pending(p, prop);
+        if (end_out) *end_out = close;
+        return 1;
+    }
+}
+
+static int find_property_by_name(const IR *ir, const char *name, int64_t *out_id) {
+    size_t i;
+    if (!name || !*name) return 0;
+
+    /* Property names are case-sensitive and must be matched literally.
+       There is intentionally no Health -> health (or reverse) fallback:
+       a property and its backing field are a pair only when their declared
+       names are exactly identical. */
+    for (i = 0; i < ir->node_count; ++i) {
+        const IRNode *n = &ir->nodes[i];
+        if (n->kind == N_PROPERTY && n->name && strcmp(n->name, name) == 0) {
+            if (out_id) *out_id = (int64_t)i;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int find_field_in_class_by_name(const IR *ir, int64_t cls, const char *name, int64_t *out_id) {
+    int64_t c;
+    if (cls < 0 || (size_t)cls >= ir->node_count || !name || !*name) return 0;
+    for (c = ir->nodes[cls].first_child; c >= 0; c = ir->nodes[c].next_sibling) {
+        const IRNode *n = &ir->nodes[c];
+        if (n->kind == N_FIELD_DECL && n->name && strcmp(n->name, name) == 0) {
+            if (out_id) *out_id = c;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void validate_class_properties(const IR *ir, int64_t cls) {
+    int64_t c;
+    if (cls < 0 || (size_t)cls >= ir->node_count) return;
+    for (c = ir->nodes[cls].first_child; c >= 0; c = ir->nodes[c].next_sibling) {
+        const IRNode *prop = &ir->nodes[c];
+        int64_t field = -1;
+        if (prop->kind != N_PROPERTY || !prop->name || !*prop->name) continue;
+        if (!find_field_in_class_by_name(ir, cls, prop->name, &field)) {
+            die("CXXE: property '%s' must have a variable with the exact same name in the same type", prop->name);
+        }
+    }
+}
+
+static void add_property_assignment_nodes_in_range(Parser *p, int64_t parent, size_t a, size_t b) {
+    size_t start=a,i;
+    int par=0,br=0,cur=0;
+    for(i=a;i<=b;++i){
+        const char*t=pt(p,i);
+        if(!strcmp(t,"("))par++; else if(!strcmp(t,")")&&par)par--; else if(!strcmp(t,"["))br++; else if(!strcmp(t,"]")&&br)br--; else if(!strcmp(t,"{"))cur++; else if(!strcmp(t,"}")&&cur)cur--;
+        if((!par&&!br&&!cur&&strcmp(t,";")==0) || (i==b)){
+            size_t end = (i==b && strcmp(t,";")!=0) ? i : i;
+            if(start<=end){
+                size_t op=SIZE_MAX;
+                if(looks_like_assignment(p,start,end,&op) && op>start && is_identifier(p,op-1)){
+                    size_t pn=op-1;
+                    int64_t pid=-1;
+                    if(find_property_by_name(p->ir,pt(p,pn),&pid) && pn>start &&
+                       (str_eq(pt(p,pn-1),".")||str_eq(pt(p,pn-1),"->"))){
+                        int64_t n=ir_add_node(p->ir,N_ASSIGN_EXPR,start,end,parent);
+                        node_set_name(p->ir,n,pt(p,op));
+                        node_set_value(p->ir,n,token_range_text(p,start,end));
+                        ir_add_child(p->ir,parent,n);
+                    }
+                }
+            }
+            start=i+1;
+        }
+    }
+}
+
+
 static void parse_class_body(Parser *p, size_t a, size_t b, int64_t cls, const char *class_name) {
     size_t i = a, start = a;
     int access = (p->ir->nodes[cls].kind == N_CLASS) ? NF_ACCESS_PRIVATE : NF_ACCESS_PUBLIC;
@@ -1357,6 +1684,15 @@ static void parse_class_body(Parser *p, size_t a, size_t b, int64_t cls, const c
             parse_decorator_sequence(p, &i, b, cls);
             start = i;
             continue;
+        }
+
+        if (str_eq(pt(p, i), "property") && start == i) {
+            size_t property_end = SIZE_MAX;
+            if (parse_property(p, i, b, cls, access, &property_end)) {
+                i = property_end + 1;
+                start = i;
+                continue;
+            }
         }
 
         if (str_eq(pt(p, i), ";")) {
@@ -1440,7 +1776,10 @@ static void parse_class(Parser *p, size_t a, size_t b, int64_t parent, NodeKind 
         node_set_value(p->ir, n, token_range_text(p, a, close));
         ir_add_child(p->ir, parent, n);
         parser_apply_pending(p, n);
-        if (name_i != SIZE_MAX) parse_class_body(p, brace + 1, close ? close - 1 : close, n, name);
+        if (name_i != SIZE_MAX) {
+            parse_class_body(p, brace + 1, close ? close - 1 : close, n, name);
+            validate_class_properties(p->ir, n);
+        }
         if (name_i != SIZE_MAX) scope_pop(p);
     }
     free(name); free(qname);
@@ -1490,6 +1829,149 @@ static int looks_like_var_decl(Parser *p, size_t a, size_t b) {
     return 0;
 }
 
+
+/* ------------------------------------------------------------------------- */
+/* Custom decorator declarations                                             */
+/*                                                                           */
+/* Syntax:                                                                   */
+/*   void @my_decorator(T x) -> func(int a) { before(x); func(a); }         */
+/*                                                                           */
+/* The declaration itself is a CXXE-only construct and disappears from the  */
+/* generated C++. At use sites (@my_decorator(...)), the decorator body is  */
+/* instantiated around the decorated function.                              */
+/* ------------------------------------------------------------------------- */
+
+static int find_top_level_at(Parser *p, size_t a, size_t b, size_t *at_out) {
+    int par = 0, br = 0, cur = 0, angle = 0;
+    size_t i;
+    for (i = a; i <= b; ++i) {
+        const char *t = pt(p, i);
+        if (str_eq(t, "(")) par++;
+        else if (str_eq(t, ")") && par) par--;
+        else if (str_eq(t, "[")) br++;
+        else if (str_eq(t, "]") && br) br--;
+        else if (str_eq(t, "{")) cur++;
+        else if (str_eq(t, "}") && cur) cur--;
+        else if (str_eq(t, "<")) angle++;
+        else if (str_eq(t, ">") && angle) angle--;
+        else if (str_eq(t, "@") && par == 0 && br == 0 && cur == 0 && angle == 0) {
+            if (at_out) *at_out = i;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+
+static int looks_like_custom_decorator_decl(Parser *p, size_t a, size_t b, int64_t parent, size_t *end_out) {
+    size_t at = SIZE_MAX, name_i, params_open, params_close, func_i, target_open, target_close, body_open, body_close;
+    size_t i;
+    int par = 0, br = 0, cur = 0, angle = 0;
+    (void)parent;
+    if (a > b) return 0;
+    /* Locate a top-level @ before the statement ends. */
+    if (!find_top_level_at(p, a, b, &at) || at <= a || at + 1 > b) return 0;
+    name_i = at + 1;
+    if (!is_decorator_identifier(p, name_i)) return 0;
+    i = name_i + 1;
+    params_open = SIZE_MAX;
+    if (i <= b && str_eq(pt(p, i), "(")) {
+        params_open = i;
+        params_close = find_matching(p, params_open, b + 1);
+        if (params_close > b) return 0;
+        i = params_close + 1;
+    } else {
+        params_close = SIZE_MAX;
+    }
+    if (i > b || !str_eq(pt(p, i), "->")) return 0;
+    i++;
+    if (i > b || !str_eq(pt(p, i), "func")) return 0;
+    func_i = i;
+    i++;
+    if (i > b || !str_eq(pt(p, i), "(")) return 0;
+    target_open = i;
+    target_close = find_matching(p, target_open, b + 1);
+    if (target_close > b) return 0;
+    i = target_close + 1;
+    while (i <= b && (str_eq(pt(p, i), "const") || str_eq(pt(p, i), "noexcept") || str_eq(pt(p, i), "&") || str_eq(pt(p, i), "&&") || str_eq(pt(p, i), "requires"))) i++;
+    if (i > b || !str_eq(pt(p, i), "{")) return 0;
+    body_open = i;
+    body_close = find_matching(p, body_open, b + 1);
+    if (body_close > b) return 0;
+    if (end_out) *end_out = body_close;
+    (void)cur; (void)par; (void)br; (void)angle; (void)func_i;
+    return 1;
+}
+
+static int parse_custom_decorator_decl(Parser *p, size_t a, size_t b, int64_t parent) {
+    size_t at = SIZE_MAX, name_i, name_end, params_open, params_close, target_open, target_close, body_open, body_close, i;
+    size_t template_i = SIZE_MAX, template_close = SIZE_MAX, decl_start = a;
+    if (!find_top_level_at(p, a, b, &at) || at <= a || at + 1 > b) return 0;
+    if (str_eq(pt(p, a), "template")) {
+        template_i = a;
+        {
+            size_t open = a + 1;
+            while (open < at && !str_eq(pt(p, open), "<")) open++;
+            if (open >= at) return 0;
+            template_close = find_template_close_cpp(p, open, at);
+            if (template_close == SIZE_MAX || template_close + 1 >= at) return 0;
+            decl_start = template_close + 1;
+        }
+    }
+    name_i = at + 1;
+    if (!is_decorator_identifier(p, name_i)) return 0;
+    name_end = name_i;
+    while (name_end + 2 <= b && str_eq(pt(p, name_end + 1), "::") && is_decorator_identifier(p, name_end + 2)) name_end += 2;
+    i = name_end + 1;
+    params_open = params_close = SIZE_MAX;
+    if (i <= b && str_eq(pt(p, i), "(")) {
+        params_open = i;
+        params_close = find_matching(p, i, b + 1);
+        if (params_close > b) return 0;
+        i = params_close + 1;
+    }
+    if (i > b || !str_eq(pt(p, i), "->")) return 0;
+    if (i + 2 > b || !str_eq(pt(p, i + 1), "func") || !str_eq(pt(p, i + 2), "(")) return 0;
+    target_open = i + 2;
+    target_close = find_matching(p, target_open, b + 1);
+    if (target_close > b) return 0;
+    i = target_close + 1;
+    while (i <= b && (str_eq(pt(p, i), "const") || str_eq(pt(p, i), "noexcept") || str_eq(pt(p, i), "&") || str_eq(pt(p, i), "&&") || str_eq(pt(p, i), "requires"))) i++;
+    if (i > b || !str_eq(pt(p, i), "{")) return 0;
+    body_open = i;
+    body_close = find_matching(p, body_open, b + 1);
+    if (body_close > b) return 0;
+
+    {
+        int64_t n = ir_add_node(p->ir, N_CUSTOM_DECORATOR, a, body_close, parent);
+        Str rt; str_init(&rt);
+        str_put(&rt, token_range_text(p, decl_start, at - 1));
+        str_trim_ascii(&rt);
+        node_set_return(p->ir, n, rt.data ? rt.data : "");
+        str_free(&rt);
+        {
+            char *decorator_name = join_qualified(p, name_i, name_end);
+            char *decorator_qualified = scope_qualified(p, decorator_name);
+            node_set_name(p->ir, n, decorator_name);
+            node_set_qualified(p->ir, n, decorator_qualified);
+            free(decorator_name); free(decorator_qualified);
+        }
+        node_set_value(p->ir, n, token_range_text(p, a, body_close));
+        ir_add_child(p->ir, parent, n);
+        if (template_i != SIZE_MAX) parse_custom_decorator_template_decl(p, n, template_i, template_close);
+        if (params_open != SIZE_MAX && params_close > params_open + 1) parse_parameters(p, n, params_open + 1, params_close - 1);
+        {
+            int64_t target = ir_add_node(p->ir, N_DECORATOR_TARGET, target_open - 1, target_close, n);
+            node_set_name(p->ir, target, "func");
+            node_set_value(p->ir, target, token_range_text(p, target_open - 1, target_close));
+            ir_add_child(p->ir, n, target);
+            if (target_close == target_open + 2 && str_eq(pt(p, target_open + 1), "...")) p->ir->nodes[target].flags |= NF_DECORATOR_VARIADIC;
+            else if (target_close > target_open + 1) parse_parameters(p, target, target_open + 1, target_close - 1);
+        }
+        return 1;
+    }
+}
+
 static void parse_region_items(Parser *p, size_t a, size_t b, int64_t parent, int class_context, const char *class_name) {
     size_t i = a;
     while (i <= b) {
@@ -1502,6 +1984,17 @@ static void parse_region_items(Parser *p, size_t a, size_t b, int64_t parent, in
         if (str_eq(pt(p, i), "@")) {
             parse_decorator_sequence(p, &i, b, parent);
             continue;
+        }
+
+        /* CXXE custom decorator declaration: return_type @name(...) -> func(...) { ... } */
+        {
+            size_t custom_end = SIZE_MAX;
+            if (looks_like_custom_decorator_decl(p, i, b, parent, &custom_end)) {
+                if (parse_custom_decorator_decl(p, i, custom_end, parent)) {
+                    i = custom_end + 1;
+                    continue;
+                }
+            }
         }
 
         if (str_eq(pt(p, i), "[[")) {
@@ -1633,7 +2126,8 @@ static void parse_region_items(Parser *p, size_t a, size_t b, int64_t parent, in
                     int64_t fn_id = -1;
                     if (parse_function_like(p, i, e, parent, class_name, open, &fn_id)) {
                         if (fn_id >= 0) parser_apply_pending(p, fn_id);
-                        i = e + 1;
+                        if (fn_id >= 0) i = (size_t)p->ir->nodes[fn_id].last_tok + 1;
+                        else i = e + 1;
                         continue;
                     }
                 }
@@ -1695,6 +2189,329 @@ static void parse_source(IR *ir) {
 }
 
 /* ------------------------------------------------------------------------- */
+/* Include/decorator discovery                                                */
+/* ------------------------------------------------------------------------- */
+
+typedef struct {
+    char **visited;
+    size_t visited_n, visited_cap;
+    char **include_dirs;
+    size_t include_dir_n, include_dir_cap;
+} IncludeContext;
+
+/* The CXXE standard headers are installed next to cxxe.exe: <exe>/stde.
+   Keep the resolved executable directory globally so every parse/roundtrip
+   automatically gets the same standard include search path without requiring
+   an explicit -I argument. */
+static char *g_cxxe_executable_dir = NULL;
+
+static void include_ctx_free(IncludeContext *ctx) {
+    size_t i;
+    for (i = 0; i < ctx->visited_n; ++i) free(ctx->visited[i]);
+    for (i = 0; i < ctx->include_dir_n; ++i) free(ctx->include_dirs[i]);
+    free(ctx->visited);
+    free(ctx->include_dirs);
+    memset(ctx, 0, sizeof(*ctx));
+}
+
+static void include_add_dir(IncludeContext *ctx, const char *dir) {
+    if (!dir || !*dir) return;
+    if (ctx->include_dir_n == ctx->include_dir_cap) {
+        ctx->include_dir_cap = ctx->include_dir_cap ? ctx->include_dir_cap * 2 : 8;
+        ctx->include_dirs = (char **)xrealloc(ctx->include_dirs, ctx->include_dir_cap * sizeof(*ctx->include_dirs));
+    }
+    ctx->include_dirs[ctx->include_dir_n++] = xstrdup0(dir);
+}
+
+static int include_visited(IncludeContext *ctx, const char *path) {
+    size_t i;
+    for (i = 0; i < ctx->visited_n; ++i) {
+#if defined(_WIN32)
+        if (_stricmp(ctx->visited[i], path) == 0) return 1;
+#else
+        if (strcmp(ctx->visited[i], path) == 0) return 1;
+#endif
+    }
+    return 0;
+}
+
+static void include_mark_visited(IncludeContext *ctx, const char *path) {
+    if (include_visited(ctx, path)) return;
+    if (ctx->visited_n == ctx->visited_cap) {
+        ctx->visited_cap = ctx->visited_cap ? ctx->visited_cap * 2 : 16;
+        ctx->visited = (char **)xrealloc(ctx->visited, ctx->visited_cap * sizeof(*ctx->visited));
+    }
+    ctx->visited[ctx->visited_n++] = xstrdup0(path);
+}
+
+static char *path_dirname0(const char *path);
+static char *normalize_path0(const char *path);
+
+static char *cxxe_executable_dir0(const char *argv0) {
+    char buf[32768];
+#ifdef _WIN32
+    {
+        DWORD len = GetModuleFileNameA(NULL, buf, (DWORD)sizeof(buf));
+        if (len > 0 && len < sizeof(buf)) {
+            buf[len] = 0;
+            {
+                char *dir = path_dirname0(buf);
+                char *norm = normalize_path0(dir);
+                free(dir);
+                return norm;
+            }
+        }
+    }
+#else
+    {
+        ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+        if (len > 0) {
+            buf[len] = 0;
+            {
+                char *dir = path_dirname0(buf);
+                char *norm = normalize_path0(dir);
+                free(dir);
+                return norm;
+            }
+        }
+    }
+#endif
+
+    /* Fallback for platforms without a reliable executable-path API. */
+    if (argv0 && *argv0) {
+        int has_sep = strchr(argv0, '/') != NULL || strchr(argv0, '\\') != NULL;
+        if (has_sep) {
+            char *dir = path_dirname0(argv0);
+            char *norm = normalize_path0(dir);
+            free(dir);
+            return norm;
+        }
+    }
+
+    return xstrdup0(".");
+}
+
+static char *path_dirname0(const char *path) {
+    const char *a = strrchr(path, '/');
+    const char *b = strrchr(path, '\\');
+    const char *p = a ? (b ? (a > b ? a : b) : a) : b;
+    if (!p) return xstrdup0(".");
+    if (p == path) return xstrndup0(path, 1);
+    return xstrndup0(path, (size_t)(p - path));
+}
+
+static char *path_join0(const char *dir, const char *name) {
+    size_t a = strlen(dir), b = strlen(name);
+    Str s; str_init(&s);
+    str_putn(&s, dir, a);
+    if (a && dir[a - 1] != '/' && dir[a - 1] != '\\') str_ch(&s, '/');
+    str_putn(&s, name, b);
+    return str_take(&s);
+}
+
+static char *normalize_path0(const char *path) {
+    Str out; size_t i = 0, n = strlen(path); int absolute = 0;
+    char **parts = NULL; size_t pn = 0, pc = 0;
+    char *tmp = xstrdup0(path), *p = tmp;
+    str_init(&out);
+    for (i = 0; i < n; ++i) if (tmp[i] == '\\') tmp[i] = '/';
+    if (tmp[0] == '/' || (isalpha((unsigned char)tmp[0]) && tmp[1] == ':' && tmp[2] == '/')) absolute = 1;
+    while (*p) {
+        char *start;
+        while (*p == '/') p++;
+        if (!*p) break;
+        start = p;
+        while (*p && *p != '/') p++;
+        if (*p) *p++ = 0;
+        if (strcmp(start, ".") == 0) continue;
+        if (strcmp(start, "..") == 0) {
+            if (pn && strcmp(parts[pn - 1], "..") != 0) { free(parts[--pn]); }
+            else if (!absolute) {
+                if (pn == pc) { pc = pc ? pc * 2 : 8; parts = (char **)xrealloc(parts, pc * sizeof(*parts)); }
+                parts[pn++] = xstrdup0("..");
+            }
+            continue;
+        }
+        if (pn == pc) { pc = pc ? pc * 2 : 8; parts = (char **)xrealloc(parts, pc * sizeof(*parts)); }
+        parts[pn++] = xstrdup0(start);
+    }
+    if (isalpha((unsigned char)tmp[0]) && tmp[1] == ':') {
+        str_ch(&out, tmp[0]); str_ch(&out, ':');
+        if (absolute) str_ch(&out, '/');
+    } else if (absolute) str_ch(&out, '/');
+    for (i = 0; i < pn; ++i) {
+        if (i) str_ch(&out, '/');
+        str_put(&out, parts[i]);
+        free(parts[i]);
+    }
+    free(parts); free(tmp);
+    if (out.len == 0) str_put(&out, absolute ? "/" : ".");
+    return str_take(&out);
+}
+
+static int file_exists0(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+    fclose(f);
+    return 1;
+}
+
+static int parse_include_spec0(const char *raw, char **name_out, int *angled_out, int *next_out) {
+    const char *kw = pp_keyword(raw), *q = raw, *e;
+    if (name_out) *name_out = NULL;
+    if (angled_out) *angled_out = 0;
+    if (next_out) *next_out = 0;
+    if (strcmp(kw, "include") != 0 && strcmp(kw, "include_next") != 0 && strcmp(kw, "import") != 0) return 0;
+    if (next_out && strcmp(kw, "include_next") == 0) *next_out = 1;
+    while (*q && *q != '#') q++;
+    if (*q == '#') q++;
+    while (*q && isspace((unsigned char)*q)) q++;
+    while (*q && !isspace((unsigned char)*q)) q++;
+    while (*q && isspace((unsigned char)*q)) q++;
+    if (*q == '"') {
+        q++; e = strchr(q, '"');
+        if (!e) return 0;
+        if (name_out) *name_out = xstrndup0(q, (size_t)(e - q));
+        return 1;
+    }
+    if (*q == '<') {
+        q++; e = strchr(q, '>');
+        if (!e) return 0;
+        if (name_out) *name_out = xstrndup0(q, (size_t)(e - q));
+        if (angled_out) *angled_out = 1;
+        return 1;
+    }
+    return 0; /* macro-expanded include: cannot resolve without a preprocessor */
+}
+
+static int header_extension_candidate0(const char *path) {
+    const char *dot = strrchr(path, '.');
+    if (!dot) return 1;
+    return strcmp(dot, ".h") == 0 || strcmp(dot, ".hpp") == 0 || strcmp(dot, ".he") == 0 ||
+           strcmp(dot, ".hh") == 0 || strcmp(dot, ".hxx") == 0 || strcmp(dot, ".inl") == 0 || strcmp(dot, ".inc") == 0;
+}
+
+static char *resolve_include_path0(const char *current_file, const char *name, int angled, IncludeContext *ctx) {
+    size_t i;
+    char *dir, *candidate;
+    if (!name || !*name) return NULL;
+    dir = path_dirname0(current_file);
+    if (!angled) {
+        candidate = path_join0(dir, name);
+        if (file_exists0(candidate)) { char *r = normalize_path0(candidate); free(candidate); free(dir); return r; }
+        free(candidate);
+    }
+    for (i = 0; i < ctx->include_dir_n; ++i) {
+        candidate = path_join0(ctx->include_dirs[i], name);
+        if (file_exists0(candidate)) { char *r = normalize_path0(candidate); free(candidate); free(dir); return r; }
+        free(candidate);
+    }
+    if (angled) {
+        /* Project-local angle includes are useful in CXXE projects; allow the
+           current file directory as a final fallback without touching system
+           compiler search paths. */
+        candidate = path_join0(dir, name);
+        if (file_exists0(candidate)) { char *r = normalize_path0(candidate); free(candidate); free(dir); return r; }
+        free(candidate);
+    }
+    free(dir);
+    return NULL;
+}
+
+static int64_t clone_ir_subtree(IR *dst, const IR *src, int64_t src_id, int64_t parent, uint32_t extra_flags) {
+    const IRNode *orig = &src->nodes[src_id];
+    int64_t n = ir_add_node(dst, orig->kind, UINT64_MAX, UINT64_MAX, parent);
+    int64_t c;
+    dst->nodes[n].flags = orig->flags | extra_flags;
+    dst->nodes[n].aux = orig->aux;
+    node_set_name(dst, n, orig->name);
+    node_set_qualified(dst, n, orig->qualified);
+    node_set_type(dst, n, orig->type);
+    node_set_return(dst, n, orig->return_type);
+    node_set_value(dst, n, orig->value);
+    node_set_resolved(dst, n, orig->resolved_name);
+    for (c = orig->first_child; c >= 0; c = src->nodes[c].next_sibling) {
+        int64_t child = clone_ir_subtree(dst, src, c, n, extra_flags);
+        ir_add_child(dst, n, child);
+    }
+    return n;
+}
+
+static void import_custom_decorators(IR *dst, const IR *src) {
+    size_t i;
+    for (i = 0; i < src->node_count; ++i) {
+        const IRNode *orig = &src->nodes[i];
+        int64_t n;
+        if (orig->kind != N_CUSTOM_DECORATOR) continue;
+        n = clone_ir_subtree(dst, src, (int64_t)i, 0, NF_EXTERNAL_DECL);
+        ir_add_child(dst, 0, n);
+    }
+}
+
+static void discover_includes_recursive(IR *dst, const char *current_file, IncludeContext *ctx);
+
+static void discover_one_include(IR *dst, const char *current_file, const char *raw, IncludeContext *ctx, IRNode *include_node) {
+    char *name = NULL, *resolved = NULL;
+    int angled = 0, next = 0;
+    IR hdr;
+    if (!parse_include_spec0(raw, &name, &angled, &next)) return;
+    (void)next;
+    resolved = resolve_include_path0(current_file, name, angled, ctx);
+    if (!resolved) {
+        if (!angled) die("cannot resolve include \"%s\" included from '%s'", name ? name : "", current_file);
+        free(name);
+        return; /* system/SDK angle include: intentionally opaque to CXXE */
+    }
+    free(name);
+    if (include_node) node_set_resolved(dst, (int64_t)(include_node - dst->nodes), resolved);
+    if (include_visited(ctx, resolved)) { free(resolved); return; }
+    include_mark_visited(ctx, resolved);
+    if (!header_extension_candidate0(resolved)) { free(resolved); return; }
+    ir_init(&hdr);
+    hdr.source = read_bytes(resolved, &hdr.source_size);
+    lex_cpp(hdr.source, hdr.source_size, &hdr.tokens);
+    parse_source(&hdr);
+    discover_includes_recursive(&hdr, resolved, ctx);
+    import_custom_decorators(dst, &hdr);
+    ir_free(&hdr);
+    free(resolved);
+}
+
+static void discover_includes_recursive(IR *dst, const char *current_file, IncludeContext *ctx) {
+    size_t i;
+    for (i = 0; i < dst->node_count; ++i) {
+        const IRNode *n = &dst->nodes[i];
+        if ((n->kind != N_INCLUDE && n->kind != N_IMPORT) || !n->value) continue;
+        discover_one_include(dst, current_file, n->value, ctx, (IRNode *)n);
+    }
+}
+
+static void discover_included_decorators(IR *ir, const char *main_path, const char *const *include_dirs, size_t include_dir_n) {
+    IncludeContext ctx;
+    size_t i;
+    memset(&ctx, 0, sizeof(ctx));
+    for (i = 0; i < include_dir_n; ++i) include_add_dir(&ctx, include_dirs[i]);
+
+    /* Standard headers are always searched from the directory containing the
+       CXXE executable. This is deliberately independent from the process
+       working directory and from the location of the current .cppe file. */
+    if (g_cxxe_executable_dir) {
+        char *stde_dir = path_join0(g_cxxe_executable_dir, "stde");
+        include_add_dir(&ctx, stde_dir);
+        free(stde_dir);
+    }
+
+    {
+        char *root = normalize_path0(main_path);
+        include_mark_visited(&ctx, root);
+        free(root);
+    }
+    discover_includes_recursive(ir, main_path, &ctx);
+    include_ctx_free(&ctx);
+}
+
+
+/* ------------------------------------------------------------------------- */
 /* Exact source reconstruction                                                */
 /* ------------------------------------------------------------------------- */
 
@@ -1725,6 +2542,10 @@ static int get_member_pattern(const IR *ir, const IRNode *n, const char **member
     return 0;
 }
 
+static int custom_decorator_template_param_ids(const IR *ir, const IRNode *cd, int64_t *ids, size_t cap);
+static int decorator_template_arg_ranges(const IR *ir, const IRNode *dec, size_t *starts, size_t *ends, size_t cap);
+static size_t custom_decorator_template_param_count(const IR *ir, const IRNode *cd);
+
 static void resolve_native_features(IR *ir) {
     size_t i;
     /* Decorators become semantic flags on their targets. */
@@ -1734,8 +2555,10 @@ static void resolve_native_features(IR *ir) {
         {
             IRNode *target = &ir->nodes[d->aux];
             if (d->flags & NF_DECORATOR_REGISTER) {
-                if (!(target->kind == N_CLASS || target->kind == N_STRUCT))
-                    die("@register can only be applied to a class or struct (token %" PRIu64 ")", target->first_tok);
+                if (!(target->kind == N_CLASS || target->kind == N_STRUCT || target->kind == N_UNION || target->kind == N_ENUM))
+                    die("@register can only be applied to a class, struct, union, or enum (token %" PRIu64 ")", target->first_tok);
+                if (target->kind == N_ENUM && (!target->name || !*target->name))
+                    die("@register requires a named enum (token %" PRIu64 ")", target->first_tok);
                 target->flags |= NF_REGISTERED;
             }
             if (d->flags & NF_DECORATOR_EXPOSED) {
@@ -1744,6 +2567,119 @@ static void resolve_native_features(IR *ir) {
                 if ((target->flags & NF_ACCESS_MASK) != NF_ACCESS_PUBLIC)
                     die("@exposed member '%s' must be public", target->name ? target->name : "<unnamed>");
                 target->flags |= NF_EXPOSED;
+            }
+        }
+    }
+
+    /* Resolve custom decorators by their fully-qualified declaration name.
+       A decorator used on a declaration is a real CXXE symbol reference: if
+       it is neither a native decorator nor a declared custom decorator, that
+       is a compile-time error. */
+    for (i = 0; i < ir->node_count; ++i) {
+        IRNode *d = &ir->nodes[i];
+        size_t j;
+        int found = 0;
+        const char *dkey;
+        if (d->kind != N_DECORATOR || d->aux == UINT64_MAX) continue;
+        if (d->flags & NF_DECORATOR_NATIVE) continue;
+        dkey = d->qualified ? d->qualified : d->name;
+        for (j = 0; j < ir->node_count; ++j) {
+            IRNode *cd = &ir->nodes[j];
+            const char *ckey = cd->qualified ? cd->qualified : cd->name;
+            if (cd->kind == N_CUSTOM_DECORATOR && dkey && ckey && strcmp(ckey, dkey) == 0) {
+                d->flags |= NF_DECORATOR_CUSTOM;
+                d->resolved_name = d->resolved_name ? d->resolved_name : xstrdup0(ckey);
+                found = 1;
+                break;
+            }
+        }
+        if (!found) {
+            die("unknown decorator '%s'", dkey ? dkey : (d->name ? d->name : "<unnamed>"));
+        }
+    }
+
+
+    /* Fixed custom decorator signatures must match the decorated function.
+       The generic func(...) form deliberately disables this check and accepts
+       any parameter list. Parameter names are not part of the signature; the
+       parameter types are. */
+    for (i = 0; i < ir->node_count; ++i) {
+        IRNode *d = &ir->nodes[i];
+        if (d->kind != N_DECORATOR || !(d->flags & NF_DECORATOR_CUSTOM) ||
+            d->aux == UINT64_MAX || d->aux >= ir->node_count) continue;
+        {
+            IRNode *cd = NULL, *target = NULL, *fn = &ir->nodes[d->aux];
+            size_t j, target_count = 0, fn_count = 0;
+            int64_t c;
+            for (j = 0; j < ir->node_count; ++j) {
+                IRNode *candidate = &ir->nodes[j];
+                const char *ckey = candidate->qualified ? candidate->qualified : candidate->name;
+                const char *dkey = d->qualified ? d->qualified : d->name;
+                if (candidate->kind == N_CUSTOM_DECORATOR && ckey && dkey && strcmp(ckey, dkey) == 0) {
+                    cd = candidate;
+                    break;
+                }
+            }
+            if (!cd) continue;
+            {
+                size_t expected_t = custom_decorator_template_param_count(ir, cd);
+                size_t actual_t = (size_t)decorator_template_arg_ranges(ir, d, NULL, NULL, 0);
+                if (expected_t == 0 && actual_t != 0)
+                    die("custom decorator '%s' is not templated but received %zu template argument(s)",
+                        d->qualified ? d->qualified : (d->name ? d->name : "<unnamed>"), actual_t);
+                if (expected_t != 0 && actual_t != expected_t)
+                    die("custom decorator '%s' expects %zu template argument(s), got %zu",
+                        d->qualified ? d->qualified : (d->name ? d->name : "<unnamed>"), expected_t, actual_t);
+            }
+            for (c = cd->first_child; c >= 0; c = ir->nodes[c].next_sibling) {
+                if (ir->nodes[c].kind == N_DECORATOR_TARGET) {
+                    target = &ir->nodes[c];
+                    if (target->flags & NF_DECORATOR_VARIADIC) break; /* generic: no signature constraint */
+                    break;
+                }
+            }
+            if (!target) continue;
+            if (target->flags & NF_DECORATOR_VARIADIC) continue;
+            for (c = target->first_child; c >= 0; c = ir->nodes[c].next_sibling)
+                if (ir->nodes[c].kind == N_PARAM_DECL) target_count++;
+            for (c = fn->first_child; c >= 0; c = ir->nodes[c].next_sibling)
+                if (ir->nodes[c].kind == N_PARAM_DECL) fn_count++;
+            if (target_count != fn_count)
+                die("custom decorator '%s' expects %zu function parameter(s), but decorated function '%s' has %zu",
+                    d->qualified ? d->qualified : (d->name ? d->name : "<unnamed>"),
+                    target_count, fn->name ? fn->name : "<unnamed>", fn_count);
+            {
+                size_t ti = 0, fi = 0;
+                char a_type[2048], b_type[2048];
+                int64_t tc = target->first_child, fc = fn->first_child;
+                while (tc >= 0 && fc >= 0) {
+                    IRNode *tp = &ir->nodes[tc], *fp = &ir->nodes[fc];
+                    if (tp->kind == N_PARAM_DECL && fp->kind == N_PARAM_DECL) {
+                        const char *ta = tp->type ? tp->type : "";
+                        const char *fb = fp->type ? fp->type : "";
+                        size_t x, y = 0;
+                        /* Compare whitespace-insensitively because the parser's
+                           token formatting is not semantically significant. */
+                        for (x = 0; ta[x] && y + 1 < sizeof(a_type); ++x)
+                            if (!isspace((unsigned char)ta[x])) a_type[y++] = ta[x];
+                        a_type[y] = 0;
+                        y = 0;
+                        for (x = 0; fb[x] && y + 1 < sizeof(b_type); ++x)
+                            if (!isspace((unsigned char)fb[x])) b_type[y++] = fb[x];
+                        b_type[y] = 0;
+                        if (strcmp(a_type, b_type) != 0)
+                            die("custom decorator '%s' expects parameter %zu of type '%s', but decorated function '%s' has type '%s'",
+                                d->qualified ? d->qualified : (d->name ? d->name : "<unnamed>"),
+                                ti + 1, ta[0] ? ta : "<unknown>",
+                                fn->name ? fn->name : "<unnamed>", fb[0] ? fb : "<unknown>");
+                        ti++;
+                    }
+                    if (tp->kind == N_PARAM_DECL) tc = tp->next_sibling;
+                    else tc = ir->nodes[tc].next_sibling;
+                    if (fp->kind == N_PARAM_DECL) fc = fp->next_sibling;
+                    else fc = ir->nodes[fc].next_sibling;
+                    fi++;
+                }
             }
         }
     }
@@ -2066,7 +3002,7 @@ static int class_has_runtime_features(const IR *ir) {
     size_t i;
     for (i = 0; i < ir->node_count; ++i) {
         const IRNode *n = &ir->nodes[i];
-        if ((n->kind == N_CLASS || n->kind == N_STRUCT) && (n->flags & NF_REGISTERED)) return 1;
+        if ((n->kind == N_CLASS || n->kind == N_STRUCT || n->kind == N_UNION || n->kind == N_ENUM) && (n->flags & NF_REGISTERED)) return 1;
         if (n->kind == N_GET_MEMBER && (n->flags & NF_GET_MEMBER_RUNTIME)) return 1;
         if (n->kind == N_FUNC_CALL && n->qualified &&
             (strcmp(n->qualified, "stde::factory_new") == 0 || strcmp(n->qualified, "stde::factory_find") == 0)) return 1;
@@ -2228,6 +3164,21 @@ static void emit_registered_member_method(const IR *ir, const IRNode *cls, const
     str_put(out, ")");
 }
 
+static void emit_registered_enum(const IR *ir, const IRNode *en, size_t index, Str *out) {
+    int64_t c;
+    str_put(out, "        auto cxxe_enum_");
+    { char num[32]; snprintf(num, sizeof(num), "%zu", index); str_put(out, num); }
+    str_put(out, " = stde::register_enum<"); str_put(out, en->qualified);
+    str_put(out, ">("); emit_cxxe_string(out, en->qualified); str_put(out, ");\n");
+    for (c = en->first_child; c >= 0; c = ir->nodes[c].next_sibling) {
+        const IRNode *ev=&ir->nodes[c];
+        if (ev->kind != N_ENUMERATOR || !ev->name || !*ev->name) continue;
+        str_put(out, "        cxxe_enum_"); { char num[32]; snprintf(num,sizeof(num),"%zu",index); str_put(out,num); }
+        str_put(out, ".value("); emit_cxxe_string(out, ev->name); str_put(out, ", ");
+        str_put(out, en->qualified); str_put(out, "::"); str_put(out, ev->name); str_put(out, ");\n");
+    }
+}
+
 static void emit_registered_classes(const IR *ir, Str *out) {
     size_t i;
     int any = 0;
@@ -2235,10 +3186,11 @@ static void emit_registered_classes(const IR *ir, Str *out) {
     for (i = 0; i < ir->node_count; ++i) {
         const IRNode *cls = &ir->nodes[i];
         int64_t c;
-        if (!((cls->kind == N_CLASS || cls->kind == N_STRUCT) && (cls->flags & NF_REGISTERED))) continue;
+        if (!((cls->kind == N_CLASS || cls->kind == N_STRUCT || cls->kind == N_UNION || cls->kind == N_ENUM) && (cls->flags & NF_REGISTERED))) continue;
         if (!cls->name || !*cls->name || !cls->qualified || !*cls->qualified)
-            die("@register requires a named class/struct");
+            die("@register requires a named type");
         any = 1;
+        if (cls->kind == N_ENUM) { emit_registered_enum(ir, cls, i, out); continue; }
         str_put(out, "        auto cxxe_class_");
         { char num[32]; snprintf(num, sizeof(num), "%zu", i); str_put(out, num); }
         str_put(out, " = stde::register_class<");
@@ -2344,8 +3296,615 @@ static void emit_get_member_runtime(const IR *ir, const IRNode *node, Str *out) 
     append_token_bytes(ir, out, a, b);
 }
 
+
+static const IRNode *find_custom_decorator_def(const IR *ir, const char *name, const char *qualified_name) {
+    size_t i;
+    for (i = 0; i < ir->node_count; ++i) {
+        const IRNode *n = &ir->nodes[i];
+        if (n->kind != N_CUSTOM_DECORATOR) continue;
+        if (qualified_name && n->qualified && strcmp(n->qualified, qualified_name) == 0) return n;
+    }
+    /* Backward-compatible fallback for older IRs which did not store qualified names. */
+    for (i = 0; i < ir->node_count; ++i) {
+        const IRNode *n = &ir->nodes[i];
+        if (n->kind == N_CUSTOM_DECORATOR && n->name && name && strcmp(n->name, name) == 0) return n;
+    }
+    return NULL;
+}
+
+static int function_has_custom_decorator(const IR *ir, const IRNode *fn) {
+    int64_t c;
+    for (c = fn->first_child; c >= 0; c = ir->nodes[c].next_sibling) {
+        const IRNode *d = &ir->nodes[c];
+        if (d->kind == N_DECORATOR && (d->flags & NF_DECORATOR_CUSTOM)) return 1;
+    }
+    return 0;
+}
+
+static size_t function_body_open(const IR *ir, const IRNode *fn) {
+    size_t i;
+    for (i = (size_t)fn->first_tok; i <= (size_t)fn->last_tok && i < ir->tokens.n; ++i)
+        if (strcmp(ir->tokens.v[i].text, "{") == 0) return i;
+    return SIZE_MAX;
+}
+
+static size_t function_name_token(const IR *ir, const IRNode *fn) {
+    size_t i;
+    if (!fn->name) return SIZE_MAX;
+    for (i = (size_t)fn->first_tok; i <= (size_t)fn->last_tok && i < ir->tokens.n; ++i) {
+        if (strcmp(ir->tokens.v[i].text, fn->name) == 0) {
+            if (i + 1 < ir->tokens.n && (strcmp(ir->tokens.v[i + 1].text, "(") == 0 || strcmp(ir->tokens.v[i + 1].text, "<") == 0)) return i;
+        }
+    }
+    return SIZE_MAX;
+}
+
+static int property_read_context(const IR *ir, size_t i, size_t b) {
+    size_t n = i + 2;
+    if (n > b || n >= ir->tokens.n) return 1;
+    /* Writes are emitted by the dedicated property-assignment path. Do not
+       turn their left-hand side into a getter here. */
+    if (!strcmp(ir->tokens.v[n].text, "=") || !strcmp(ir->tokens.v[n].text, "+=") ||
+        !strcmp(ir->tokens.v[n].text, "-=") || !strcmp(ir->tokens.v[n].text, "*=") ||
+        !strcmp(ir->tokens.v[n].text, "/=") || !strcmp(ir->tokens.v[n].text, "%=") ||
+        !strcmp(ir->tokens.v[n].text, "++") || !strcmp(ir->tokens.v[n].text, "--")) return 0;
+    return 1;
+}
+
+static void emit_tokens_range_raw(const IR *ir, Str *out, size_t a, size_t b, const char *replace_name, size_t replace_tok) {
+    size_t i;
+    if (a > b || b >= ir->tokens.n) return;
+    for (i = a; i <= b; ++i) {
+        str_put(out, ir->tokens.v[i].trivia);
+        if (i == replace_tok && replace_name) str_put(out, replace_name);
+        else str_put(out, ir->tokens.v[i].text);
+    }
+}
+
+static void emit_tokens_range(const IR *ir, Str *out, size_t a, size_t b, const char *replace_name, size_t replace_tok) {
+    size_t i;
+    if (a > b || b >= ir->tokens.n) return;
+    for (i = a; i <= b; ++i) {
+        const char *text = ir->tokens.v[i].text;
+        str_put(out, ir->tokens.v[i].trivia);
+        if (i == replace_tok && replace_name) {
+            str_put(out, replace_name);
+            continue;
+        }
+        if ((strcmp(text, ".") == 0 || strcmp(text, "->") == 0) &&
+            i > a && i + 1 <= b && i + 1 < ir->tokens.n &&
+            ir->tokens.v[i + 1].kind == TK_IDENTIFIER && property_read_context(ir, i, b)) {
+            int64_t pid = -1;
+            if (find_property_by_name(ir, ir->tokens.v[i + 1].text, &pid)) {
+                str_put(out, text);
+                str_put(out, "get_");
+                str_put(out, ir->nodes[pid].name ? ir->nodes[pid].name : ir->tokens.v[i + 1].text);
+                str_put(out, "()");
+                i++;
+                continue;
+            }
+        }
+        str_put(out, text);
+    }
+}
+
+/* Emit a source-byte interval while applying CXXE's transparent property
+   getter rewrite. Using byte offsets here lets us handle property reads in
+   arbitrary expressions, including variable initializers and call arguments,
+   even when the parser did not create a dedicated N_PROPERTY_ACCESS node. */
+static void emit_source_range_with_properties(const IR *ir, Str *out, uint64_t begin, uint64_t end) {
+    size_t i;
+    uint64_t pos = begin;
+    if (begin >= end) return;
+    for (i = 0; i < ir->tokens.n; ++i) {
+        const Token *t = &ir->tokens.v[i];
+        if (t->kind == TK_EOF) break;
+        if (t->byte_end <= begin) continue;
+        if (t->byte_start >= end) break;
+        if (t->byte_start > pos) {
+            uint64_t gap_end = t->byte_start < end ? t->byte_start : end;
+            if (gap_end > pos) str_putn(out, (const char *)ir->source + pos, (size_t)(gap_end - pos));
+        }
+        if ((strcmp(t->text, ".") == 0 || strcmp(t->text, "->") == 0) &&
+            i + 1 < ir->tokens.n && ir->tokens.v[i + 1].kind == TK_IDENTIFIER &&
+            ir->tokens.v[i + 1].byte_start < end) {
+            int64_t pid = -1;
+            if (find_property_by_name(ir, ir->tokens.v[i + 1].text, &pid)) {
+                str_put(out, t->text);
+                str_put(out, "get_");
+                str_put(out, ir->nodes[pid].name ? ir->nodes[pid].name : ir->tokens.v[i + 1].text);
+                str_put(out, "()");
+                pos = ir->tokens.v[i + 1].byte_end;
+                ++i;
+                continue;
+            }
+        }
+        if (t->byte_end > pos) {
+            uint64_t token_begin = t->byte_start > pos ? t->byte_start : pos;
+            uint64_t token_end = t->byte_end < end ? t->byte_end : end;
+            if (token_end > token_begin) str_putn(out, (const char *)ir->source + token_begin, (size_t)(token_end - token_begin));
+        }
+        if (t->byte_end > pos) pos = t->byte_end;
+        if (pos >= end) break;
+    }
+    if (pos < end) str_putn(out, (const char *)ir->source + pos, (size_t)(end - pos));
+}
+
+static size_t split_top_args(const IR *ir, size_t a, size_t b, size_t *starts, size_t *ends, size_t cap) {
+    size_t count = 0, start = a, i;
+    int par = 0, br = 0, cur = 0, angle = 0;
+    if (a > b) return 0;
+    for (i = a; i <= b; ++i) {
+        const char *t = ir->tokens.v[i].text;
+        if (strcmp(t, "(") == 0) par++;
+        else if (strcmp(t, ")") == 0 && par) par--;
+        else if (strcmp(t, "[") == 0) br++;
+        else if (strcmp(t, "]") == 0 && br) br--;
+        else if (strcmp(t, "{") == 0) cur++;
+        else if (strcmp(t, "}") == 0 && cur) cur--;
+        else if (strcmp(t, "<") == 0) angle++;
+        else if (strcmp(t, ">") == 0 && angle) angle--;
+        else if (strcmp(t, ",") == 0 && par == 0 && br == 0 && cur == 0 && angle == 0) {
+            if (start <= i - 1 && count < cap) { starts[count] = start; ends[count] = i - 1; count++; }
+            start = i + 1;
+        }
+    }
+    if (start <= b && count < cap) { starts[count] = start; ends[count] = b; count++; }
+    return count;
+}
+
+static int decorator_invocation_args(const IR *ir, const IRNode *dec, size_t *starts, size_t *ends, size_t cap, size_t *count_out) {
+    size_t a = (size_t)dec->first_tok, b = (size_t)dec->last_tok, i, open = SIZE_MAX, close = SIZE_MAX;
+    if (a > b || b >= ir->tokens.n) return 0;
+    for (i = a + 1; i <= b; ++i) {
+        if (strcmp(ir->tokens.v[i].text, "(") == 0) { open = i; break; }
+    }
+    if (open == SIZE_MAX) { if (count_out) *count_out = 0; return 1; }
+    {
+        int d = 0;
+        for (i = open; i <= b; ++i) {
+            if (strcmp(ir->tokens.v[i].text, "(") == 0) d++;
+            else if (strcmp(ir->tokens.v[i].text, ")") == 0 && --d == 0) { close = i; break; }
+        }
+    }
+    if (close == SIZE_MAX) return 0;
+    if (count_out) *count_out = split_top_args(ir, open + 1, close - 1, starts, ends, cap);
+    return 1;
+}
+
+static int custom_decorator_template_param_ids(const IR *ir, const IRNode *cd, int64_t *ids, size_t cap) {
+    size_t n = 0; int64_t c, pc;
+    for (c = cd->first_child; c >= 0; c = ir->nodes[c].next_sibling) {
+        const IRNode *tpl = &ir->nodes[c];
+        if (tpl->kind != N_TEMPLATE) continue;
+        for (pc = tpl->first_child; pc >= 0; pc = ir->nodes[pc].next_sibling) {
+            const IRNode *p = &ir->nodes[pc];
+            if (p->kind == N_TEMPLATE_TYPE_PARAM || p->kind == N_TEMPLATE_NON_TYPE_PARAM || p->kind == N_TEMPLATE_TEMPLATE_PARAM) {
+                if (ids && n < cap) ids[n] = pc;
+                n++;
+            }
+        }
+        break;
+    }
+    return (int)n;
+}
+
+static int decorator_template_arg_ranges(const IR *ir, const IRNode *dec, size_t *starts, size_t *ends, size_t cap) {
+    int64_t c, a; size_t n = 0;
+    for (c = dec->first_child; c >= 0; c = ir->nodes[c].next_sibling) {
+        const IRNode *tpl = &ir->nodes[c];
+        if (tpl->kind != N_DECORATOR_TEMPLATE) continue;
+        for (a = tpl->first_child; a >= 0; a = ir->nodes[a].next_sibling) {
+            if (ir->nodes[a].kind == N_DECORATOR_TEMPLATE_ARG) {
+                if (starts && ends && n < cap) { starts[n] = (size_t)ir->nodes[a].first_tok; ends[n] = (size_t)ir->nodes[a].last_tok; }
+                n++;
+            }
+        }
+        return (int)n;
+    }
+    return 0;
+}
+
+static size_t custom_decorator_template_param_count(const IR *ir, const IRNode *cd) {
+    return (size_t)custom_decorator_template_param_ids(ir, cd, NULL, 0);
+}
+
+static int custom_decorator_target_param_ids(const IR *ir, const IRNode *cd, int64_t *ids, size_t cap) {
+    int64_t c, target = -1;
+    size_t n = 0;
+    for (c = cd->first_child; c >= 0; c = ir->nodes[c].next_sibling) {
+        if (ir->nodes[c].kind == N_DECORATOR_TARGET) { target = c; break; }
+    }
+    if (target < 0) return 0;
+    for (c = ir->nodes[target].first_child; c >= 0; c = ir->nodes[c].next_sibling) {
+        if (ir->nodes[c].kind == N_PARAM_DECL) {
+            if (ids && n < cap) ids[n] = c;
+            n++;
+        }
+    }
+    return (int)n;
+}
+
+static size_t custom_decorator_param_ids(const IR *ir, const IRNode *cd, int64_t *ids, size_t cap) {
+    size_t n = 0; int64_t c;
+    for (c = cd->first_child; c >= 0; c = ir->nodes[c].next_sibling) {
+        if (ir->nodes[c].kind == N_DECORATOR_TARGET) break;
+        if (ir->nodes[c].kind == N_PARAM_DECL) {
+            if (ids && n < cap) ids[n] = c;
+            n++;
+        }
+    }
+    return n;
+}
+
+static int custom_decorator_is_variadic(const IR *ir, const IRNode *cd) {
+    int64_t c;
+    for (c = cd->first_child; c >= 0; c = ir->nodes[c].next_sibling) {
+        if (ir->nodes[c].kind == N_DECORATOR_TARGET)
+            return (ir->nodes[c].flags & NF_DECORATOR_VARIADIC) != 0;
+    }
+    return 0;
+}
+
+static void emit_actual_function_args(const IR *ir, const IRNode *fn, Str *out) {
+    int first = 1;
+    int64_t c;
+    for (c = fn->first_child; c >= 0; c = ir->nodes[c].next_sibling) {
+        const IRNode *p = &ir->nodes[c];
+        if (p->kind != N_PARAM_DECL) continue;
+        if (!first) str_put(out, ", ");
+        first = 0;
+        if (p->name && *p->name) str_put(out, p->name);
+        else {
+            /* A parameter without a source name cannot be forwarded by name.
+               C++ function definitions normally have names when a decorator
+               uses func(...); keep the generated call valid for the common
+               unnamed-parameter case by omitting that argument. */
+        }
+    }
+}
+
+static const char *actual_function_param_name(const IR *ir, const IRNode *fn, size_t index) {
+    size_t n = 0; int64_t c;
+    for (c = fn->first_child; c >= 0; c = ir->nodes[c].next_sibling) {
+        if (ir->nodes[c].kind != N_PARAM_DECL) continue;
+        if (n++ == index) return ir->nodes[c].name;
+    }
+    return NULL;
+}
+
+static size_t find_token_matching_paren(const IR *ir, size_t open, size_t end_exclusive) {
+    size_t i;
+    int depth = 0;
+    if (open >= ir->tokens.n || strcmp(ir->tokens.v[open].text, "(") != 0) return SIZE_MAX;
+    for (i = open; i < end_exclusive && i < ir->tokens.n; ++i) {
+        const char *t = ir->tokens.v[i].text;
+        if (strcmp(t, "(") == 0) depth++;
+        else if (strcmp(t, ")") == 0) {
+            if (--depth == 0) return i;
+        }
+    }
+    return SIZE_MAX;
+}
+
+static size_t find_matching_paren_tv(const TokenVec *tv, size_t open, size_t end_exclusive) {
+    size_t i; int d = 0;
+    if (!tv || open >= tv->n || strcmp(tv->v[open].text, "(") != 0) return SIZE_MAX;
+    for (i = open; i < end_exclusive && i < tv->n; ++i) {
+        if (strcmp(tv->v[i].text, "(") == 0) d++;
+        else if (strcmp(tv->v[i].text, ")") == 0 && --d == 0) return i;
+    }
+    return SIZE_MAX;
+}
+
+static size_t external_body_open(const TokenVec *tv) {
+    size_t i;
+    if (!tv) return SIZE_MAX;
+    for (i = 0; i < tv->n; ++i) if (strcmp(tv->v[i].text, "{") == 0) return i;
+    return SIZE_MAX;
+}
+
+static void emit_custom_decorator_body_external(const IR *ir, const IRNode *cd, const IRNode *fn, const IRNode *dec, const char *current_callee, Str *out) {
+    TokenVec tv; size_t i, bo, bc, dec_starts[64], dec_ends[64], dec_count = 0; int64_t dparams[64], tparams[64];
+    size_t dpn, d, tstarts[64], tends[64], tpn = 0, tac = 0;
+    memset(&tv, 0, sizeof(tv));
+    if (!cd->value) return;
+    lex_cpp((const uint8_t *)cd->value, strlen(cd->value), &tv);
+    bo = external_body_open(&tv);
+    if (bo == SIZE_MAX) { tokens_free(&tv); return; }
+    bc = SIZE_MAX;
+    if (tv.n) {
+        size_t q = tv.n;
+        while (q > 0) {
+            --q;
+            if (tv.v[q].kind != TK_EOF) { bc = q; break; }
+        }
+    }
+    if (bc == SIZE_MAX) { tokens_free(&tv); return; }
+    if (bc > bo && strcmp(tv.v[bc].text, "}") == 0) bc--;
+    dpn = custom_decorator_param_ids(ir, cd, dparams, 64);
+    if (!decorator_invocation_args(ir, dec, dec_starts, dec_ends, 64, &dec_count)) die("CXXE: malformed custom decorator invocation '%s'", dec->name ? dec->name : "<unnamed>");
+    if (dec_count != dpn) die("CXXE: decorator '%s' expects %zu argument(s), got %zu", cd->name ? cd->name : "<unnamed>", dpn, dec_count);
+    tpn = (size_t)custom_decorator_template_param_ids(ir, cd, tparams, 64);
+    tac = (size_t)decorator_template_arg_ranges(ir, dec, tstarts, tends, 64);
+
+    for (i = bo + 1; i <= bc; ++i) {
+        const Token *t = &tv.v[i]; int replaced = 0;
+        if (t->kind == TK_IDENTIFIER) {
+            if (strcmp(t->text, "func") == 0 && i + 1 <= bc && strcmp(tv.v[i + 1].text, "(") == 0) {
+                size_t close = find_matching_paren_tv(&tv, i + 1, bc + 1);
+                str_put(out, t->trivia); str_put(out, current_callee);
+                if (close != SIZE_MAX) {
+                    if (custom_decorator_is_variadic(ir, cd)) {
+                        str_ch(out, '('); emit_actual_function_args(ir, fn, out); str_ch(out, ')');
+                        i = close;
+                    } else {
+                        /* For a fixed func(...) signature, the normal parameter-name mapping
+                           remains available through the generic emitter below; leave the call
+                           untouched rather than guessing semantics. */
+                    }
+                }
+                replaced = 1;
+            }
+            if (!replaced) {
+                size_t ti;
+                for (ti = 0; ti < tpn && ti < tac; ++ti) {
+                    const char *tp_name = ir->nodes[tparams[ti]].name;
+                    if (tp_name && strcmp(t->text, tp_name) == 0) {
+                        str_put(out, t->trivia);
+                        emit_tokens_range(ir, out, tstarts[ti], tends[ti], NULL, SIZE_MAX);
+                        replaced = 1;
+                        break;
+                    }
+                }
+            }
+            if (!replaced) {
+                for (d = 0; d < dpn; ++d) {
+                    const char *pn = ir->nodes[dparams[d]].name;
+                    if (pn && strcmp(t->text, pn) == 0) {
+                        str_put(out, t->trivia); str_ch(out, '(');
+                        emit_tokens_range(ir, out, dec_starts[d], dec_ends[d], NULL, SIZE_MAX);
+                        str_ch(out, ')'); replaced = 1; break;
+                    }
+                }
+            }
+            if (!replaced) {
+                int64_t ids[128]; int tn = custom_decorator_target_param_ids(ir, cd, ids, 128); size_t ti;
+                for (ti = 0; ti < (size_t)tn; ++ti) {
+                    if (ir->nodes[ids[ti]].name && strcmp(ir->nodes[ids[ti]].name, t->text) == 0) {
+                        const char *actual = actual_function_param_name(ir, fn, ti);
+                        if (actual) { str_put(out, t->trivia); str_put(out, actual); replaced = 1; }
+                        break;
+                    }
+                }
+            }
+        }
+        if (!replaced) { str_put(out, t->trivia); str_put(out, t->text); }
+    }
+    tokens_free(&tv);
+}
+
+static void emit_custom_decorator_body(const IR *ir, const IRNode *cd, const IRNode *fn, const IRNode *dec, const char *current_callee, Str *out) {
+    if (cd->flags & NF_EXTERNAL_DECL) {
+        emit_custom_decorator_body_external(ir, cd, fn, dec, current_callee, out);
+        return;
+    }
+    size_t body_open = function_body_open(ir, cd);
+    size_t body_close = (size_t)cd->last_tok;
+    size_t dec_starts[64], dec_ends[64], dec_count = 0;
+    int64_t dparams[64], tparams[64];
+    size_t tstarts[64], tends[64], tpn = 0, tac = 0;
+    size_t dpn = custom_decorator_param_ids(ir, cd, dparams, 64);
+    size_t i;
+    if (body_open == SIZE_MAX || body_open >= body_close) return;
+    if (body_close > body_open && strcmp(ir->tokens.v[body_close].text, "}") == 0) body_close--;
+    if (!decorator_invocation_args(ir, dec, dec_starts, dec_ends, 64, &dec_count)) die("CXXE: malformed custom decorator invocation '%s'", dec->name ? dec->name : "<unnamed>");
+    if (dec_count != dpn) die("CXXE: decorator '%s' expects %zu argument(s), got %zu", cd->name ? cd->name : "<unnamed>", dpn, dec_count);
+    tpn = (size_t)custom_decorator_template_param_ids(ir, cd, tparams, 64);
+    tac = (size_t)decorator_template_arg_ranges(ir, dec, tstarts, tends, 64);
+
+    for (i = body_open + 1; i <= body_close; ++i) {
+        const Token *t = &ir->tokens.v[i];
+        size_t di;
+        if (t->kind == TK_IDENTIFIER) {
+            int replaced = 0;
+            if (strcmp(t->text, "func") == 0 && i + 1 <= body_close && strcmp(ir->tokens.v[i + 1].text, "(") == 0) {
+                str_put(out, t->trivia);
+                str_put(out, current_callee);
+                if (custom_decorator_is_variadic(ir, cd)) {
+                    size_t close = find_token_matching_paren(ir, i + 1, body_close + 1);
+                    if (close == SIZE_MAX) die("CXXE: malformed func(...) in custom decorator '%s'", cd->name ? cd->name : "<unnamed>");
+                    str_ch(out, '(');
+                    emit_actual_function_args(ir, fn, out);
+                    str_ch(out, ')');
+                    i = close;
+                }
+                replaced = 1;
+            }
+            if (!replaced) {
+                size_t ti;
+                for (ti = 0; ti < tpn && ti < tac; ++ti) {
+                    const char *tp_name = ir->nodes[tparams[ti]].name;
+                    if (tp_name && strcmp(t->text, tp_name) == 0) {
+                        str_put(out, t->trivia);
+                        emit_tokens_range(ir, out, tstarts[ti], tends[ti], NULL, SIZE_MAX);
+                        replaced = 1;
+                        break;
+                    }
+                }
+            }
+            if (!replaced) {
+                for (di = 0; di < dpn; ++di) {
+                    const char *pn = ir->nodes[dparams[di]].name;
+                    if (pn && strcmp(t->text, pn) == 0) {
+                        size_t s = dec_starts[di], e = dec_ends[di];
+                        str_put(out, t->trivia);
+                        str_ch(out, '(');
+                        emit_tokens_range(ir, out, s, e, NULL, SIZE_MAX);
+                        str_ch(out, ')');
+                        replaced = 1;
+                        break;
+                    }
+                }
+            }
+            if (!replaced) {
+                int64_t found_target = -1; size_t target_index = 0;
+                int64_t ids[128]; int tn = custom_decorator_target_param_ids(ir, cd, ids, 128);
+                for (target_index = 0; target_index < (size_t)tn; ++target_index) {
+                    if (ir->nodes[ids[target_index]].name && strcmp(ir->nodes[ids[target_index]].name, t->text) == 0) { found_target = ids[target_index]; break; }
+                }
+                if (found_target >= 0) {
+                    const char *actual = actual_function_param_name(ir, fn, target_index);
+                    if (actual) {
+                        str_put(out, t->trivia);
+                        str_put(out, actual);
+                        replaced = 1;
+                    }
+                }
+            }
+            if (!replaced) {
+                str_put(out, t->trivia);
+                str_put(out, t->text);
+            }
+        } else {
+            str_put(out, t->trivia);
+            str_put(out, t->text);
+        }
+    }
+}
+
+static void emit_property_block(const IR *ir, const IRNode *block, Str *out) {
+    size_t a=(size_t)block->first_tok,b=(size_t)block->last_tok,i,open=SIZE_MAX;
+    for(i=a;i<=b && i<ir->tokens.n;++i) if(!strcmp(ir->tokens.v[i].text,"{")){open=i;break;}
+    if(open==SIZE_MAX || b<=open) return;
+    emit_tokens_range_raw(ir,out,open+1,b-1,NULL,SIZE_MAX);
+}
+
+static void emit_property(const IR *ir, const IRNode *prop, Str *out) {
+    int64_t g=property_child_kind(ir,prop,N_PROPERTY_GET), s=property_child_kind(ir,prop,N_PROPERTY_SET);
+    const char *name=prop->name?prop->name:"Property";
+    if(g>=0){ str_put(out,"decltype(auto) get_"); str_put(out,name); str_put(out,"() {"); emit_property_block(ir,&ir->nodes[g],out); str_put(out,"}\n"); }
+    if(s>=0){ str_put(out,"template <typename CXXEPropertyValue>\nvoid set_"); str_put(out,name); str_put(out,"(CXXEPropertyValue&& value) {"); emit_property_block(ir,&ir->nodes[s],out); str_put(out,"}\n"); }
+}
+
+static int property_access_is_write(const IR *ir, const IRNode *node) {
+    size_t i=(size_t)node->last_tok+1;
+    if (i>=ir->tokens.n) return 0;
+    return !strcmp(ir->tokens.v[i].text,"=") || !strcmp(ir->tokens.v[i].text,"+=") || !strcmp(ir->tokens.v[i].text,"-=") ||
+           !strcmp(ir->tokens.v[i].text,"*=") || !strcmp(ir->tokens.v[i].text,"/=") || !strcmp(ir->tokens.v[i].text,"%=");
+}
+
+static void emit_property_access(const IR *ir, const IRNode *node, Str *out) {
+    size_t a=(size_t)node->first_tok,b=(size_t)node->last_tok;
+    size_t sep=SIZE_MAX;
+    if(b<a || node->aux>=ir->node_count){ append_token_bytes(ir,out,a,b); return; }
+    {
+        const IRNode *prop=&ir->nodes[node->aux];
+        if(!property_has_get(ir,prop) || property_access_is_write(ir,node)){ append_token_bytes(ir,out,a,b); return; }
+    }
+    if (b > a && (!strcmp(ir->tokens.v[b-1].text,".") || !strcmp(ir->tokens.v[b-1].text,"->"))) sep=b-1;
+    if (sep==SIZE_MAX) { append_token_bytes(ir,out,a,b); return; }
+    append_token_bytes(ir,out,a,sep-1);
+    str_put(out,ir->tokens.v[sep].text);
+    str_put(out,"get_");
+    str_put(out,ir->nodes[node->aux].name?ir->nodes[node->aux].name:node->name);
+    str_put(out,"()");
+}
+
+static int node_is_property_assignment(const IR *ir, const IRNode *node, int64_t *prop_id_out, size_t *op_out, size_t *sep_out) {
+    size_t a=(size_t)node->first_tok,b=(size_t)node->last_tok,i;
+    int par=0,br=0,cur=0, top_semis=0;
+    size_t op=SIZE_MAX, sep=SIZE_MAX; int64_t pid=-1;
+    for(i=a;i<=b;++i){
+        const char*t=ir->tokens.v[i].text;
+        if(!strcmp(t,"("))par++; else if(!strcmp(t,")")&&par)par--; else if(!strcmp(t,"["))br++; else if(!strcmp(t,"]")&&br)br--; else if(!strcmp(t,"{"))cur++; else if(!strcmp(t,"}")&&cur)cur--;
+        else if(!par&&!br&&!cur&&!strcmp(t,";")) top_semis++;
+        else if(!par&&!br&&!cur&&!strcmp(t,"=")&&op==SIZE_MAX&&i>a&&ir->tokens.v[i-1].kind==TK_IDENTIFIER){
+            size_t pn=i-1;
+            if(pn>a && (!strcmp(ir->tokens.v[pn-1].text,".")||!strcmp(ir->tokens.v[pn-1].text,"->")) && find_property_by_name(ir,ir->tokens.v[pn].text,&pid)){
+                op=i; sep=pn-1;
+            }
+        }
+    }
+    if(top_semis>1 || op==SIZE_MAX) return 0;
+    if(prop_id_out)*prop_id_out=pid;
+    if(op_out)*op_out=op;
+    if(sep_out)*sep_out=sep;
+    return 1;
+}
+
+static void emit_property_assignment(const IR *ir, const IRNode *node, Str *out) {
+    size_t a=(size_t)node->first_tok,b=(size_t)node->last_tok,op=SIZE_MAX,sep=SIZE_MAX;
+    int64_t pid=-1;
+    if(!node_is_property_assignment(ir,node,&pid,&op,&sep)){ append_token_bytes(ir,out,a,b); return; }
+    if(!property_has_set(ir,&ir->nodes[pid])) die("CXXE: property '%s' has no setter",ir->nodes[pid].name?ir->nodes[pid].name:"<unnamed>");
+    append_token_bytes(ir,out,a,sep-1);
+    str_put(out,ir->tokens.v[sep].text);
+    str_put(out,"set_"); str_put(out,ir->nodes[pid].name?ir->nodes[pid].name:"Property"); str_ch(out,'(');
+    if(op+1<=b){
+        size_t rhs_b=b;
+        if(rhs_b>=a && !strcmp(ir->tokens.v[rhs_b].text,";")) rhs_b--;
+        if(op+1<=rhs_b) append_token_bytes(ir,out,op+1,rhs_b);
+    }
+    str_ch(out,')');
+    if(b>=a && !strcmp(ir->tokens.v[b].text,";")) str_ch(out,';');
+}
+
+static void emit_function_with_custom_decorators(const IR *ir, const IRNode *fn, Str *out) {
+    int64_t custom_ids[64];
+    size_t custom_count = 0, i;
+    int64_t c;
+    size_t body_open = function_body_open(ir, fn);
+    size_t name_tok = function_name_token(ir, fn);
+    if (body_open == SIZE_MAX || name_tok == SIZE_MAX) die("CXXE: custom decorators require a function definition with a named function");
+    if (!(fn->kind == N_FUNCTION || fn->kind == N_METHOD)) die("CXXE: custom decorators can only be applied to functions or methods");
+    for (c = fn->first_child; c >= 0; c = ir->nodes[c].next_sibling) {
+        const IRNode *d = &ir->nodes[c];
+        if (d->kind == N_DECORATOR && (d->flags & NF_DECORATOR_CUSTOM)) {
+            if (custom_count < 64) custom_ids[custom_count] = c;
+            custom_count++;
+        }
+    }
+    if (custom_count > 64) die("CXXE: too many custom decorators on function '%s'", fn->name ? fn->name : "<unnamed>");
+
+    /* Base implementation: same signature/body, with a private unique name. */
+    {
+        char base_name[256];
+        snprintf(base_name, sizeof(base_name), "%s__cxxe_impl_%" PRIu64, fn->name ? fn->name : "function", (uint64_t)(fn - ir->nodes));
+        emit_tokens_range(ir, out, (size_t)fn->first_tok, body_open - 1, base_name, name_tok);
+        str_put(out, " {");
+        if (body_open + 1 <= (size_t)fn->last_tok) emit_tokens_range(ir, out, body_open + 1, (size_t)fn->last_tok - 1, NULL, SIZE_MAX);
+        str_put(out, "}\n\n");
+
+        /* Apply decorators from nearest-to-function outward. The first written
+           decorator is therefore the outermost one, matching common decorator semantics. */
+        {
+            char current[256];
+            snprintf(current, sizeof(current), "%s", base_name);
+            for (i = custom_count; i-- > 0;) {
+                const IRNode *dec = &ir->nodes[custom_ids[i]];
+                const IRNode *cd = find_custom_decorator_def(ir, dec->name, dec->qualified);
+                char wrapper_name[256];
+                if (!cd) continue;
+                if (i == 0) snprintf(wrapper_name, sizeof(wrapper_name), "%s", fn->name);
+                else snprintf(wrapper_name, sizeof(wrapper_name), "%s__cxxe_decorator_%" PRIu64, fn->name ? fn->name : "function", (uint64_t)custom_ids[i]);
+                emit_tokens_range(ir, out, (size_t)fn->first_tok, body_open - 1, wrapper_name, name_tok);
+                str_put(out, " {");
+                emit_custom_decorator_body(ir, cd, fn, dec, current, out);
+                str_put(out, "}\n\n");
+                snprintf(current, sizeof(current), "%s", wrapper_name);
+            }
+        }
+    }
+}
+
 static int node_needs_native_emit(const IR *ir, const IRNode *n) {
     if (n->kind == N_DECORATOR) return 1;
+    if (n->kind == N_CUSTOM_DECORATOR) return 1;
+    if (n->kind == N_PROPERTY) return 1;
+    if (n->kind == N_PROPERTY_ACCESS) return !property_access_is_write(ir, n);
+    if (n->kind == N_ASSIGN_EXPR) return node_is_property_assignment(ir, n, NULL, NULL, NULL);
+    if ((n->kind == N_FUNCTION || n->kind == N_METHOD) && function_has_custom_decorator(ir, n)) return 1;
     if (n->kind == N_GET_MEMBER) return 1;
     if (n->kind == N_FUNC_CALL && node_is_factory_runtime_call(n)) return 1;
     if (n->kind == N_FUNC_CALL && node_is_named_call(ir, (int64_t)(n - ir->nodes))) return 1;
@@ -2363,6 +3922,7 @@ static void emit_cpp(const IR *ir, const char *path) {
     for (i = 0; i < ir->node_count; ++i) {
         const IRNode *n = &ir->nodes[i];
         if (!node_needs_native_emit(ir, n)) continue;
+        if (n->flags & NF_EXTERNAL_DECL) continue;
         if (n->first_tok >= ir->tokens.n || n->last_tok >= ir->tokens.n || n->first_tok > n->last_tok) continue;
         {
             size_t first_tok = (size_t)n->first_tok;
@@ -2383,8 +3943,18 @@ static void emit_cpp(const IR *ir, const char *path) {
             uint64_t be = ir->tokens.v[last_tok].byte_end;
             if (bs < cursor) continue;
             if (bs > ir->source_size || be > ir->source_size || be < bs) continue;
-            str_putn(&out, (const char *)ir->source + cursor, (size_t)(bs - cursor));
-            if (n->kind == N_DECORATOR) { /* Native CXXE decorators are runtime registration metadata. */ }
+            emit_source_range_with_properties(ir, &out, cursor, bs);
+            if (n->kind == N_DECORATOR || n->kind == N_CUSTOM_DECORATOR) { /* CXXE-only decorator syntax. */ }
+            else if (n->kind == N_PROPERTY) { emit_property(ir, n, &out); }
+            else if ((n->kind == N_FUNCTION || n->kind == N_METHOD) && function_has_custom_decorator(ir, n)) {
+                emit_function_with_custom_decorators(ir, n, &out);
+            }
+            else if (n->kind == N_PROPERTY_ACCESS) {
+                emit_property_access(ir, n, &out);
+            }
+            else if (n->kind == N_ASSIGN_EXPR) {
+                emit_property_assignment(ir, n, &out);
+            }
             else if (n->kind == N_GET_MEMBER) {
                 emit_get_member_runtime(ir, n, &out);
             }
@@ -2393,7 +3963,7 @@ static void emit_cpp(const IR *ir, const char *path) {
             cursor = (size_t)be;
         }
     }
-    if (cursor < ir->source_size) str_putn(&out, (const char *)ir->source + cursor, ir->source_size - cursor);
+    if (cursor < ir->source_size) emit_source_range_with_properties(ir, &out, cursor, (uint64_t)ir->source_size);
     if (runtime_features) emit_registered_classes(ir, &out);
     write_bytes(path, out.data ? out.data : "", out.len);
     str_free(&out);
@@ -2540,6 +4110,7 @@ static void dump_tree(const IR *ir, int64_t id, int depth) {
     if (n->return_type && *n->return_type) printf(" return=%s", n->return_type);
     if (n->resolved_name && *n->resolved_name) printf(" resolved=%s", n->resolved_name);
     if (n->kind == N_DECORATOR && n->aux != UINT64_MAX) printf(" target=%" PRIu64, n->aux);
+    if (n->flags & NF_DECORATOR_CUSTOM) printf(" custom");
     if (n->flags & NF_REGISTERED) printf(" registered");
     if (n->flags & NF_EXPOSED) printf(" exposed");
     if ((n->flags & NF_ACCESS_MASK) == NF_ACCESS_PUBLIC && (n->kind == N_FIELD_DECL || n->kind == N_METHOD || n->kind == N_FUNCTION)) printf(" access=public");
@@ -2562,6 +4133,596 @@ static void dump_ir(const IR *ir) {
     if (ir->node_count) dump_tree(ir, 0, 0);
 }
 
+static int command_usage(const char *command);
+
+/* ------------------------------------------------------------------------- */
+/* Embedded CXXE runtime                                                     */
+/* ------------------------------------------------------------------------- */
+
+static const char CXXE_RUNTIME_HPP[] =
+"#ifndef CXXE_RUNTIME_HPP\n"
+"#define CXXE_RUNTIME_HPP\n"
+"\n"
+"#include <any>\n"
+"#include <memory>\n"
+"#include <mutex>\n"
+"#include <stdexcept>\n"
+"#include <string>\n"
+"#include <string_view>\n"
+"#include <type_traits>\n"
+"#include <typeindex>\n"
+"#include <utility>\n"
+"#include <vector>\n"
+"\n"
+"namespace stde {\n"
+"\n"
+"class DynamicValue {\n"
+"    std::any value_;\n"
+"public:\n"
+"    DynamicValue() = default;\n"
+"    explicit DynamicValue(std::any value) : value_(std::move(value)) {}\n"
+"\n"
+"    template <class T>\n"
+"    static DynamicValue from(T&& value) {\n"
+"        return DynamicValue(std::any(std::forward<T>(value)));\n"
+"    }\n"
+"\n"
+"    bool has_value() const noexcept { return value_.has_value(); }\n"
+"\n"
+"    template <class T>\n"
+"    T get() const { return std::any_cast<T>(value_); }\n"
+"\n"
+"    template <class T>\n"
+"    operator T() const { return std::any_cast<T>(value_); }\n"
+"};\n"
+"\n"
+"namespace detail {\n"
+"\n"
+"template <class T>\n"
+"std::any pack_argument(T&& value) {\n"
+"    if constexpr (std::is_lvalue_reference_v<T&&>) {\n"
+"        using U = std::remove_reference_t<T>;\n"
+"        if constexpr (std::is_const_v<U>) return std::any(std::cref(value));\n"
+"        else return std::any(std::ref(value));\n"
+"    } else {\n"
+"        return std::any(std::forward<T>(value));\n"
+"    }\n"
+"}\n"
+"\n"
+"template <class T>\n"
+"decltype(auto) unpack_argument(const std::any& value) {\n"
+"    using U = std::remove_reference_t<T>;\n"
+"    using V = std::remove_cv_t<U>;\n"
+"\n"
+"    if constexpr (std::is_lvalue_reference_v<T>) {\n"
+"        if constexpr (std::is_const_v<U>) {\n"
+"            if (value.type() == typeid(std::reference_wrapper<const V>))\n"
+"                return std::any_cast<std::reference_wrapper<const V>>(value).get();\n"
+"            return std::any_cast<std::reference_wrapper<V>>(value).get();\n"
+"        } else {\n"
+"            return std::any_cast<std::reference_wrapper<V>>(value).get();\n"
+"        }\n"
+"    } else if constexpr (std::is_rvalue_reference_v<T>) {\n"
+"        return std::move(std::any_cast<V&>(const_cast<std::any&>(value)));\n"
+"    } else {\n"
+"        return std::any_cast<std::decay_t<T>>(value);\n"
+"    }\n"
+"}\n"
+"\n"
+"} // namespace detail\n"
+"\n"
+"struct MemberInfo {\n"
+"    enum class Kind { Field, Method };\n"
+"    using Getter = DynamicValue (*)(void*);\n"
+"    using Setter = void (*)(void*, const std::any&);\n"
+"    using Invoker = DynamicValue (*)(void*, const std::vector<std::any>&);\n"
+"\n"
+"    Kind kind = Kind::Field;\n"
+"    std::string name;\n"
+"    Getter getter = nullptr;\n"
+"    Setter setter = nullptr;\n"
+"    Invoker invoker = nullptr;\n"
+"};\n"
+"\n"
+"struct ClassInfo {\n"
+"    using Create = void* (*)();\n"
+"    using Destroy = void (*)(void*);\n"
+"\n"
+"    std::string name;\n"
+"    std::type_index type = typeid(void);\n"
+"    Create create = nullptr;\n"
+"    Destroy destroy = nullptr;\n"
+"    std::vector<std::shared_ptr<MemberInfo>> members;\n"
+"};\n"
+"\n"
+"struct EnumValueInfo {\n"
+"    std::string name;\n"
+"    std::any value;\n"
+"};\n"
+"\n"
+"struct EnumInfo {\n"
+"    std::string name;\n"
+"    std::type_index type = typeid(void);\n"
+"    std::vector<EnumValueInfo> values;\n"
+"};\n"
+"\n"
+"class EnumRegistry {\n"
+"    mutable std::mutex mutex_;\n"
+"    std::vector<std::shared_ptr<EnumInfo>> enums_;\n"
+"\n"
+"    EnumRegistry() = default;\n"
+"public:\n"
+"    EnumRegistry(const EnumRegistry&) = delete;\n"
+"    EnumRegistry& operator=(const EnumRegistry&) = delete;\n"
+"\n"
+"    static EnumRegistry& instance() {\n"
+"        static EnumRegistry registry;\n"
+"        return registry;\n"
+"    }\n"
+"\n"
+"    template <class E>\n"
+"    std::shared_ptr<EnumInfo> register_enum(std::string_view name) {\n"
+"        static_assert(std::is_enum_v<E>, \"stde::register_enum requires an enum type\");\n"
+"        std::lock_guard<std::mutex> lock(mutex_);\n"
+"        for (auto& item : enums_) {\n"
+"            if (item->name == name && item->type == std::type_index(typeid(E))) {\n"
+"                item->values.clear();\n"
+"                return item;\n"
+"            }\n"
+"        }\n"
+"        auto item = std::make_shared<EnumInfo>();\n"
+"        item->name = std::string(name);\n"
+"        item->type = std::type_index(typeid(E));\n"
+"        enums_.push_back(item);\n"
+"        return item;\n"
+"    }\n"
+"\n"
+"    std::shared_ptr<EnumInfo> find(std::string_view name) const {\n"
+"        std::lock_guard<std::mutex> lock(mutex_);\n"
+"        for (const auto& item : enums_) if (item->name == name) return item;\n"
+"        return {};\n"
+"    }\n"
+"\n"
+"    std::shared_ptr<EnumInfo> find_type(std::type_index type) const {\n"
+"        std::lock_guard<std::mutex> lock(mutex_);\n"
+"        for (const auto& item : enums_) if (item->type == type) return item;\n"
+"        return {};\n"
+"    }\n"
+"};\n"
+"\n"
+"class Registry {\n"
+"    mutable std::mutex mutex_;\n"
+"    std::vector<std::shared_ptr<ClassInfo>> classes_;\n"
+"\n"
+"    Registry() = default;\n"
+"\n"
+"public:\n"
+"    Registry(const Registry&) = delete;\n"
+"    Registry& operator=(const Registry&) = delete;\n"
+"\n"
+"    static Registry& instance() {\n"
+"        static Registry registry;\n"
+"        return registry;\n"
+"    }\n"
+"\n"
+"    template <class T>\n"
+"    std::shared_ptr<ClassInfo> register_class(std::string_view name) {\n"
+"        std::lock_guard<std::mutex> lock(mutex_);\n"
+"        for (auto& item : classes_) {\n"
+"            if (item->name == name && item->type == std::type_index(typeid(T))) {\n"
+"                item->create = make_create<T>();\n"
+"                item->destroy = make_destroy<T>();\n"
+"                item->members.clear();\n"
+"                return item;\n"
+"            }\n"
+"        }\n"
+"\n"
+"        auto item = std::make_shared<ClassInfo>();\n"
+"        item->name = std::string(name);\n"
+"        item->type = std::type_index(typeid(T));\n"
+"        item->create = make_create<T>();\n"
+"        item->destroy = make_destroy<T>();\n"
+"        classes_.push_back(item);\n"
+"        return item;\n"
+"    }\n"
+"\n"
+"    std::shared_ptr<ClassInfo> find(std::string_view name) const {\n"
+"        std::lock_guard<std::mutex> lock(mutex_);\n"
+"        for (const auto& item : classes_)\n"
+"            if (item->name == name) return item;\n"
+"        return {};\n"
+"    }\n"
+"\n"
+"    std::shared_ptr<ClassInfo> find_type(std::type_index type) const {\n"
+"        std::lock_guard<std::mutex> lock(mutex_);\n"
+"        for (const auto& item : classes_)\n"
+"            if (item->type == type) return item;\n"
+"        return {};\n"
+"    }\n"
+"\n"
+"private:\n"
+"    template <class T>\n"
+"    static ClassInfo::Create make_create() {\n"
+"        return []() -> void* {\n"
+"            if constexpr (std::is_default_constructible_v<T>) return static_cast<void*>(new T());\n"
+"            else return nullptr;\n"
+"        };\n"
+"    }\n"
+"\n"
+"    template <class T>\n"
+"    static ClassInfo::Destroy make_destroy() {\n"
+"        return [](void* p) { delete static_cast<T*>(p); };\n"
+"    }\n"
+"};\n"
+"\n"
+"template <class T>\n"
+"class ClassBuilder {\n"
+"    std::shared_ptr<ClassInfo> info_;\n"
+"public:\n"
+"    explicit ClassBuilder(std::shared_ptr<ClassInfo> info) : info_(std::move(info)) {}\n"
+"\n"
+"    ClassBuilder& expose_field(std::string_view name, MemberInfo::Getter getter, MemberInfo::Setter setter = nullptr) {\n"
+"        auto member = std::make_shared<MemberInfo>();\n"
+"        member->kind = MemberInfo::Kind::Field;\n"
+"        member->name = std::string(name);\n"
+"        member->getter = getter;\n"
+"        member->setter = setter;\n"
+"        info_->members.push_back(std::move(member));\n"
+"        return *this;\n"
+"    }\n"
+"\n"
+"    ClassBuilder& expose_method(std::string_view name, MemberInfo::Invoker invoker) {\n"
+"        auto member = std::make_shared<MemberInfo>();\n"
+"        member->kind = MemberInfo::Kind::Method;\n"
+"        member->name = std::string(name);\n"
+"        member->invoker = invoker;\n"
+"        info_->members.push_back(std::move(member));\n"
+"        return *this;\n"
+"    }\n"
+"};\n"
+"\n"
+"template <class T>\n"
+"ClassBuilder<T> register_class(std::string_view name) {\n"
+"    return ClassBuilder<T>(Registry::instance().register_class<T>(name));\n"
+"}\n"
+"\n"
+"\n"
+"template <class E>\n"
+"class EnumBuilder {\n"
+"    std::shared_ptr<EnumInfo> info_;\n"
+"public:\n"
+"    explicit EnumBuilder(std::shared_ptr<EnumInfo> info) : info_(std::move(info)) {}\n"
+"\n"
+"    EnumBuilder& value(std::string_view name, E value) {\n"
+"        if (!info_) throw std::runtime_error(\"CXXE: invalid enum builder\");\n"
+"        EnumValueInfo item;\n"
+"        item.name = std::string(name);\n"
+"        item.value = value;\n"
+"        info_->values.push_back(std::move(item));\n"
+"        return *this;\n"
+"    }\n"
+"};\n"
+"\n"
+"template <class E>\n"
+"EnumBuilder<E> register_enum(std::string_view name) {\n"
+"    return EnumBuilder<E>(EnumRegistry::instance().register_enum<E>(name));\n"
+"}\n"
+"\n"
+"template <class E>\n"
+"std::shared_ptr<EnumInfo> get_enum_info() {\n"
+"    static_assert(std::is_enum_v<E>, \"stde::get_enum_info requires an enum type\");\n"
+"    return EnumRegistry::instance().find_type(std::type_index(typeid(E)));\n"
+"}\n"
+"\n"
+"template <class E>\n"
+"std::string enum_to_string(E value) {\n"
+"    static_assert(std::is_enum_v<E>, \"stde::enum_to_string requires an enum type\");\n"
+"    auto info = get_enum_info<E>();\n"
+"    if (!info) throw std::runtime_error(\"CXXE: enum type is not registered\");\n"
+"    for (const auto& item : info->values) {\n"
+"        if (std::any_cast<E>(item.value) == value) return item.name;\n"
+"    }\n"
+"    throw std::runtime_error(\"CXXE: enum value is not registered: \" + std::to_string(static_cast<long long>(value)));\n"
+"}\n"
+"\n"
+"template <class E>\n"
+"E string_to_enum(std::string_view name) {\n"
+"    static_assert(std::is_enum_v<E>, \"stde::string_to_enum requires an enum type\");\n"
+"    auto info = get_enum_info<E>();\n"
+"    if (!info) throw std::runtime_error(\"CXXE: enum type is not registered\");\n"
+"    for (const auto& item : info->values) {\n"
+"        if (item.name == name) return std::any_cast<E>(item.value);\n"
+"    }\n"
+"    throw std::runtime_error(\"CXXE: enum value not found: \" + std::string(name));\n"
+"}\n"
+"\n"
+"template <class E>\n"
+"bool enum_has_value(E value) {\n"
+"    static_assert(std::is_enum_v<E>, \"stde::enum_has_value requires an enum type\");\n"
+"    auto info = get_enum_info<E>();\n"
+"    if (!info) return false;\n"
+"    for (const auto& item : info->values) if (std::any_cast<E>(item.value) == value) return true;\n"
+"    return false;\n"
+"}\n"
+"\n"
+"template <class E>\n"
+"bool enum_has_name(std::string_view name) {\n"
+"    static_assert(std::is_enum_v<E>, \"stde::enum_has_name requires an enum type\");\n"
+"    auto info = get_enum_info<E>();\n"
+"    if (!info) return false;\n"
+"    for (const auto& item : info->values) if (item.name == name) return true;\n"
+"    return false;\n"
+"}\n"
+"\n"
+"template <class E>\n"
+"std::vector<std::string> enum_names() {\n"
+"    static_assert(std::is_enum_v<E>, \"stde::enum_names requires an enum type\");\n"
+"    auto info = get_enum_info<E>();\n"
+"    if (!info) throw std::runtime_error(\"CXXE: enum type is not registered\");\n"
+"    std::vector<std::string> result;\n"
+"    result.reserve(info->values.size());\n"
+"    for (const auto& item : info->values) result.push_back(item.name);\n"
+"    return result;\n"
+"}\n"
+"\n"
+"class FactoryResult {    void* pointer_ = nullptr;\n"
+"    std::shared_ptr<ClassInfo> info_;\n"
+"public:\n"
+"    FactoryResult() = default;\n"
+"    FactoryResult(void* pointer, std::shared_ptr<ClassInfo> info)\n"
+"        : pointer_(pointer), info_(std::move(info)) {}\n"
+"\n"
+"    void* raw() const noexcept { return pointer_; }\n"
+"\n"
+"    template <class T>\n"
+"    T* as() const {\n"
+"        if (!pointer_) return nullptr;\n"
+"        if (!info_ || info_->type != std::type_index(typeid(T)))\n"
+"            throw std::runtime_error(\"CXXE factory type mismatch\");\n"
+"        return static_cast<T*>(pointer_);\n"
+"    }\n"
+"\n"
+"    template <class T>\n"
+"    operator T*() const { return as<T>(); }\n"
+"};\n"
+"\n"
+"inline FactoryResult factory_new(std::string_view name) {\n"
+"    auto info = Registry::instance().find(name);\n"
+"    if (!info) throw std::runtime_error(\"CXXE: factory class not registered: \" + std::string(name));\n"
+"    if (!info->create) throw std::runtime_error(\"CXXE: class cannot be constructed: \" + std::string(name));\n"
+"    void* object = info->create();\n"
+"    if (!object) throw std::runtime_error(\"CXXE: class has no default constructor: \" + std::string(name));\n"
+"    return FactoryResult(object, std::move(info));\n"
+"}\n"
+"\n"
+"inline std::shared_ptr<ClassInfo> factory_find(std::string_view name) {\n"
+"    auto info = Registry::instance().find(name);\n"
+"    if (!info) throw std::runtime_error(\"CXXE: factory class not registered: \" + std::string(name));\n"
+"    return info;\n"
+"}\n"
+"\n"
+"class MemberProxy {\n"
+"    void* object_ = nullptr;\n"
+"    std::type_index type_ = typeid(void);\n"
+"    std::string name_;\n"
+"\n"
+"    std::shared_ptr<ClassInfo> class_info() const {\n"
+"        return Registry::instance().find_type(type_);\n"
+"    }\n"
+"\n"
+"    std::shared_ptr<MemberInfo> find_member() const {\n"
+"        auto info = class_info();\n"
+"        if (!info) throw std::runtime_error(\"CXXE: object class is not registered\");\n"
+"        for (const auto& member : info->members)\n"
+"            if (member->name == name_) return member;\n"
+"        throw std::runtime_error(\"CXXE: exposed member not found: \" + name_);\n"
+"    }\n"
+"\n"
+"public:\n"
+"    MemberProxy() = default;\n"
+"    MemberProxy(void* object, std::type_index type, std::string_view name)\n"
+"        : object_(object), type_(type), name_(name) {}\n"
+"\n"
+"    template <class T>\n"
+"    operator T() const {\n"
+"        auto member = find_member();\n"
+"        if (member->kind != MemberInfo::Kind::Field || !member->getter)\n"
+"            throw std::runtime_error(\"CXXE: exposed member is not a field: \" + name_);\n"
+"        return member->getter(object_).template get<T>();\n"
+"    }\n"
+"\n"
+"    template <class T>\n"
+"    MemberProxy& operator=(T&& value) {\n"
+"        auto member = find_member();\n"
+"        if (member->kind != MemberInfo::Kind::Field)\n"
+"            throw std::runtime_error(\"CXXE: exposed member is not a field: \" + name_);\n"
+"        if (!member->setter)\n"
+"            throw std::runtime_error(\"CXXE: exposed field is read-only: \" + name_);\n"
+"        member->setter(object_, std::any(std::forward<T>(value)));\n"
+"        return *this;\n"
+"    }\n"
+"\n"
+"    template <class... Args>\n"
+"    DynamicValue operator()(Args&&... args) const {\n"
+"        auto info = class_info();\n"
+"        if (!info) throw std::runtime_error(\"CXXE: object class is not registered\");\n"
+"        std::vector<std::any> packed;\n"
+"        packed.reserve(sizeof...(Args));\n"
+"        (packed.emplace_back(detail::pack_argument(std::forward<Args>(args))), ...);\n"
+"\n"
+"        auto member = find_member();\n"
+"        if (member->kind != MemberInfo::Kind::Method || !member->invoker)\n"
+"            throw std::runtime_error(\"CXXE: exposed member is not a method: \" + name_);\n"
+"\n"
+"        try {\n"
+"            return member->invoker(object_, packed);\n"
+"        } catch (const std::bad_any_cast&) {\n"
+"            throw;\n"
+"        }\n"
+"    }\n"
+"};\n"
+"\n"
+"template <class T>\n"
+"MemberProxy get_member(T* object, std::string_view name) {\n"
+"    if (!object) throw std::runtime_error(\"CXXE: get_member called with null object\");\n"
+"    return MemberProxy(static_cast<void*>(object), std::type_index(typeid(T)), name);\n"
+"}\n"
+"\n"
+"template <class T>\n"
+"MemberProxy get_member(T& object, std::string_view name) {\n"
+"    return MemberProxy(static_cast<void*>(std::addressof(object)), std::type_index(typeid(T)), name);\n"
+"}\n"
+"\n"
+"} // namespace stde\n"
+"\n"
+"#endif\n"
+;
+
+static const char CXXE_RUNTIME_CPP[] =
+"#include \"cxxe_runtime.hpp\"\n"
+"\n"
+"// CXXE runtime is intentionally small and header-driven. This translation\n"
+"// unit exists so projects can build a conventional runtime library (static\n"
+"// or shared) instead of relying on header-only usage.\n"
+;
+
+#ifdef _WIN32
+#include <direct.h>
+#define CXXE_MKDIR(path) _mkdir(path)
+#else
+#include <sys/stat.h>
+#define CXXE_MKDIR(path) mkdir((path), 0777)
+#endif
+
+static int cxxe_write_text_file(const char *path, const char *data, size_t size) {
+    FILE *f = fopen(path, "wb");
+    if (!f) {
+        fprintf(stderr, "cxxe: error: cannot create '%s': %s\\n", path, strerror(errno));
+        return 0;
+    }
+    if (size && fwrite(data, 1, size, f) != size) {
+        fclose(f);
+        fprintf(stderr, "cxxe: error: cannot write '%s'\\n", path);
+        return 0;
+    }
+    if (fclose(f) != 0) {
+        fprintf(stderr, "cxxe: error: cannot close '%s'\\n", path);
+        return 0;
+    }
+    return 1;
+}
+
+static int cxxe_mkdir_one(const char *path) {
+    if (!path || !*path) return 1;
+    if (CXXE_MKDIR(path) == 0) return 1;
+    if (errno == EEXIST) return 1;
+    return 0;
+}
+
+static int cxxe_make_directory_recursive(const char *path) {
+    char *tmp;
+    size_t n, i;
+    if (!path || !*path) return 0;
+    tmp = xstrdup0(path);
+    n = strlen(tmp);
+    for (i = 0; i < n; ++i) {
+        if (tmp[i] == '/' || tmp[i] == '\\') {
+            char saved = tmp[i];
+            if (i == 0) continue;
+            if (i == 2 && tmp[1] == ':') continue; /* Windows drive prefix. */
+            tmp[i] = 0;
+            if (*tmp && !cxxe_mkdir_one(tmp)) {
+                free(tmp);
+                return 0;
+            }
+            tmp[i] = saved;
+        }
+    }
+    if (!cxxe_mkdir_one(tmp)) {
+        free(tmp);
+        return 0;
+    }
+    free(tmp);
+    return 1;
+}
+
+static int cxxe_runtime_emit_one(const char *kind, const char *output) {
+    const char *data;
+    size_t size;
+    if (!kind || !output) return 0;
+    if (strcmp(kind, "header") == 0) {
+        data = CXXE_RUNTIME_HPP;
+        size = sizeof(CXXE_RUNTIME_HPP) - 1;
+    } else if (strcmp(kind, "source") == 0) {
+        data = CXXE_RUNTIME_CPP;
+        size = sizeof(CXXE_RUNTIME_CPP) - 1;
+    } else {
+        fprintf(stderr, "cxxe: error: unknown runtime artifact '%s'\\n", kind);
+        return 0;
+    }
+    if (strcmp(output, "-") == 0) {
+        if (size && fwrite(data, 1, size, stdout) != size) return 0;
+        return 1;
+    }
+    return cxxe_write_text_file(output, data, size);
+}
+
+static int cxxe_runtime_export(const char *directory) {
+    char *hpp, *cpp;
+    size_t n;
+    if (!directory || !*directory) return 0;
+    if (!cxxe_make_directory_recursive(directory)) {
+        fprintf(stderr, "cxxe: error: cannot create runtime directory '%s': %s\\n", directory, strerror(errno));
+        return 0;
+    }
+    n = strlen(directory);
+    hpp = (char *)xmalloc(n + strlen("/cxxe_runtime.hpp") + 1);
+    cpp = (char *)xmalloc(n + strlen("/cxxe_runtime.cpp") + 1);
+    sprintf(hpp, "%s/cxxe_runtime.hpp", directory);
+    sprintf(cpp, "%s/cxxe_runtime.cpp", directory);
+    if (!cxxe_runtime_emit_one("header", hpp) || !cxxe_runtime_emit_one("source", cpp)) {
+        free(hpp); free(cpp);
+        return 0;
+    }
+    free(hpp);
+    free(cpp);
+    return 1;
+}
+
+static int cxxe_runtime_command(int argc, char **argv) {
+    if (argc < 2) {
+        fprintf(stderr, "cxxe: error: runtime expects 'export', 'header', or 'source'\\n");
+        return 2;
+    }
+    if (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0) {
+        printf(
+            "Usage: cxxe runtime <command> <output>\n"
+            "\n"
+            "Commands:\n"
+            "  export <directory>    Write cxxe_runtime.hpp and cxxe_runtime.cpp\n"
+            "  header <output.hpp|->  Write only cxxe_runtime.hpp\n"
+            "  source <output.cpp|->  Write only cxxe_runtime.cpp\n"
+            "\n"
+            "Use '-' as the output path to write the requested artifact to stdout.\n");
+        return 0;
+    }
+    if (strcmp(argv[1], "export") == 0) {
+        if (argc != 3 || !*argv[2]) return command_usage("runtime export");
+        return cxxe_runtime_export(argv[2]) ? 0 : 1;
+    }
+    if (strcmp(argv[1], "header") == 0) {
+        if (argc != 3 || !*argv[2]) return command_usage("runtime header");
+        return cxxe_runtime_emit_one("header", argv[2]) ? 0 : 1;
+    }
+    if (strcmp(argv[1], "source") == 0) {
+        if (argc != 3 || !*argv[2]) return command_usage("runtime source");
+        return cxxe_runtime_emit_one("source", argv[2]) ? 0 : 1;
+    }
+    fprintf(stderr, "cxxe: error: unknown runtime command '%s'\\n", argv[1]);
+    fprintf(stderr, "Try 'cxxe.exe --help' for more information.\\n");
+    return 2;
+}
+
 /* ------------------------------------------------------------------------- */
 /* Entry points                                                               */
 /* ------------------------------------------------------------------------- */
@@ -2582,10 +4743,14 @@ static void usage(FILE *stream) {
         "  emit <input.cpir> <output.cpp>     Generate C++ from CPIR\n"
         "  roundtrip <input.cpp> <output.cpp> Parse then generate C++\n"
         "  dump <input.cpir>                  Display CPIR information\n"
+        "  runtime export <directory>          Export cxxe_runtime.hpp/.cpp\n"
+        "  runtime header <output.hpp|->       Export only the runtime header\n"
+        "  runtime source <output.cpp|->       Export only the runtime source\n"
         "\n"
         "Options:\n"
         "  -h, --help                         Show this help message\n"
         "  -v, --version                      Show version\n"
+        "  -I <dir>                           Add an include search directory\n"
         "\n"
         "Examples:\n"
         "  cxxe parse main.cpp main.cpir\n"
@@ -2606,105 +4771,112 @@ static int command_usage(const char *command) {
     return 2;
 }
 
-static void build_ir_from_cpp(IR *ir, const char *path) {
+static void build_ir_from_cpp(IR *ir, const char *path, const char *const *include_dirs, size_t include_dir_n) {
     ir_init(ir);
     ir->source = read_bytes(path, &ir->source_size);
     lex_cpp(ir->source, ir->source_size, &ir->tokens);
     parse_source(ir);
+    discover_included_decorators(ir, path, include_dirs, include_dir_n);
     resolve_native_features(ir);
     resolve_named_args(ir);
 }
 
 int main(int argc, char **argv) {
     IR ir;
+    const char **include_dirs = NULL;
+    size_t include_dir_n = 0, include_dir_cap = 0;
+    int argi = 1;
+    const char *command;
 
-    if (argc < 2) {
-        usage(stderr);
-        return 2;
-    }
+    g_cxxe_executable_dir = cxxe_executable_dir0(argv[0]);
 
-    /* Global options. They may be used without a command. */
-    if (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0) {
-        usage(stdout);
-        return 0;
-    }
-    if (strcmp(argv[1], "--version") == 0 || strcmp(argv[1], "-v") == 0) {
-        print_version();
-        return 0;
-    }
-    if (argv[1][0] == '-') {
-        return invalid_option(argv[1]);
-    }
+    if (argc < 2) { usage(stderr); free(g_cxxe_executable_dir); g_cxxe_executable_dir = NULL; return 2; }
 
-    if (strcmp(argv[1], "parse") == 0) {
-        if (argc >= 3 && (strcmp(argv[2], "--help") == 0 || strcmp(argv[2], "-h") == 0)) {
-            usage(stdout);
-            return 0;
+    while (argi < argc) {
+        if (strcmp(argv[argi], "--help") == 0 || strcmp(argv[argi], "-h") == 0) {
+            if (argi == 1) { usage(stdout); free(include_dirs); return 0; }
+            break;
         }
-        if (argc != 4) return command_usage("parse");
-        if (argv[2][0] == '-') return invalid_option(argv[2]);
-        if (argv[3][0] == '-') return invalid_option(argv[3]);
-        build_ir_from_cpp(&ir, argv[2]);
-        save_ir(&ir, argv[3]);
-        printf("cxxe: parsed %s -> %s (%zu nodes, %zu tokens)\n", argv[2], argv[3], ir.node_count, ir.tokens.n);
-        ir_free(&ir);
-        return 0;
+        if (strcmp(argv[argi], "--version") == 0 || strcmp(argv[argi], "-v") == 0) {
+            if (argi == 1) { print_version(); free(include_dirs); return 0; }
+            break;
+        }
+        if (strcmp(argv[argi], "-I") == 0) {
+            if (argi + 1 >= argc) { free(include_dirs); return invalid_option("-I"); }
+            if (include_dir_n == include_dir_cap) {
+                include_dir_cap = include_dir_cap ? include_dir_cap * 2 : 8;
+                include_dirs = (const char **)xrealloc((void *)include_dirs, include_dir_cap * sizeof(*include_dirs));
+            }
+            include_dirs[include_dir_n++] = argv[argi + 1];
+            argi += 2;
+            continue;
+        }
+        if (strncmp(argv[argi], "-I", 2) == 0 && argv[argi][2] != 0) {
+            if (include_dir_n == include_dir_cap) {
+                include_dir_cap = include_dir_cap ? include_dir_cap * 2 : 8;
+                include_dirs = (const char **)xrealloc((void *)include_dirs, include_dir_cap * sizeof(*include_dirs));
+            }
+            include_dirs[include_dir_n++] = argv[argi] + 2;
+            argi++;
+            continue;
+        }
+        break;
     }
 
-    if (strcmp(argv[1], "emit") == 0) {
-        if (argc >= 3 && (strcmp(argv[2], "--help") == 0 || strcmp(argv[2], "-h") == 0)) {
-            usage(stdout);
-            return 0;
-        }
-        if (argc != 4) return command_usage("emit");
-        if (argv[2][0] == '-') return invalid_option(argv[2]);
-        if (argv[3][0] == '-') return invalid_option(argv[3]);
-        ir_init(&ir);
-        load_ir(&ir, argv[2]);
-        emit_exact(&ir, argv[3]);
-        printf("cxxe: emitted %s -> %s\n", argv[2], argv[3]);
-        ir_free(&ir);
-        return 0;
+    if (argi >= argc) { free(include_dirs); usage(stderr); return 2; }
+    command = argv[argi++];
+
+    if (strcmp(command, "runtime") == 0) {
+        int r = cxxe_runtime_command(argc - argi + 1, argv + argi - 1);
+        free(include_dirs);
+        return r;
     }
 
-    if (strcmp(argv[1], "roundtrip") == 0) {
-        if (argc >= 3 && (strcmp(argv[2], "--help") == 0 || strcmp(argv[2], "-h") == 0)) {
-            usage(stdout);
-            return 0;
-        }
-        if (argc != 4) return command_usage("roundtrip");
-        if (argv[2][0] == '-') return invalid_option(argv[2]);
-        if (argv[3][0] == '-') return invalid_option(argv[3]);
-        build_ir_from_cpp(&ir, argv[2]);
+    if (strcmp(command, "parse") == 0) {
+        if (argi < argc && (strcmp(argv[argi], "--help") == 0 || strcmp(argv[argi], "-h") == 0)) { usage(stdout); free(include_dirs); return 0; }
+        if (argc - argi != 2) { free(include_dirs); return command_usage("parse"); }
+        if (argv[argi][0] == '-') { int r = invalid_option(argv[argi]); free(include_dirs); return r; }
+        if (argv[argi + 1][0] == '-') { int r = invalid_option(argv[argi + 1]); free(include_dirs); return r; }
+        build_ir_from_cpp(&ir, argv[argi], include_dirs, include_dir_n);
+        save_ir(&ir, argv[argi + 1]);
+        printf("cxxe: parsed %s -> %s (%zu nodes, %zu tokens)\n", argv[argi], argv[argi + 1], ir.node_count, ir.tokens.n);
+        ir_free(&ir); free(include_dirs); return 0;
+    }
+
+    if (strcmp(command, "emit") == 0) {
+        if (argi < argc && (strcmp(argv[argi], "--help") == 0 || strcmp(argv[argi], "-h") == 0)) { usage(stdout); free(include_dirs); return 0; }
+        if (argc - argi != 2) { free(include_dirs); return command_usage("emit"); }
+        if (argv[argi][0] == '-') { int r = invalid_option(argv[argi]); free(include_dirs); return r; }
+        if (argv[argi + 1][0] == '-') { int r = invalid_option(argv[argi + 1]); free(include_dirs); return r; }
+        ir_init(&ir); load_ir(&ir, argv[argi]); emit_exact(&ir, argv[argi + 1]);
+        printf("cxxe: emitted %s -> %s\n", argv[argi], argv[argi + 1]);
+        ir_free(&ir); free(include_dirs); return 0;
+    }
+
+    if (strcmp(command, "roundtrip") == 0) {
+        if (argi < argc && (strcmp(argv[argi], "--help") == 0 || strcmp(argv[argi], "-h") == 0)) { usage(stdout); free(include_dirs); return 0; }
+        if (argc - argi != 2) { free(include_dirs); return command_usage("roundtrip"); }
+        if (argv[argi][0] == '-') { int r = invalid_option(argv[argi]); free(include_dirs); return r; }
+        if (argv[argi + 1][0] == '-') { int r = invalid_option(argv[argi + 1]); free(include_dirs); return r; }
+        build_ir_from_cpp(&ir, argv[argi], include_dirs, include_dir_n);
         save_ir(&ir, ".cxxe.tmp.cpir");
         {
-            IR reloaded;
-            ir_init(&reloaded);
-            load_ir(&reloaded, ".cxxe.tmp.cpir");
-            emit_exact(&reloaded, argv[3]);
-            ir_free(&reloaded);
+            IR reloaded; ir_init(&reloaded); load_ir(&reloaded, ".cxxe.tmp.cpir"); emit_exact(&reloaded, argv[argi + 1]); ir_free(&reloaded);
         }
-        remove(".cxxe.tmp.cpir");
-        ir_free(&ir);
-        printf("cxxe: round-trip %s -> %s\n", argv[2], argv[3]);
-        return 0;
+        remove(".cxxe.tmp.cpir"); ir_free(&ir);
+        printf("cxxe: round-trip %s -> %s\n", argv[argi], argv[argi + 1]);
+        free(include_dirs); return 0;
     }
 
-    if (strcmp(argv[1], "dump") == 0) {
-        if (argc >= 3 && (strcmp(argv[2], "--help") == 0 || strcmp(argv[2], "-h") == 0)) {
-            usage(stdout);
-            return 0;
-        }
-        if (argc != 3) return command_usage("dump");
-        if (argv[2][0] == '-') return invalid_option(argv[2]);
-        ir_init(&ir);
-        load_ir(&ir, argv[2]);
-        dump_ir(&ir);
-        ir_free(&ir);
-        return 0;
+    if (strcmp(command, "dump") == 0) {
+        if (argi < argc && (strcmp(argv[argi], "--help") == 0 || strcmp(argv[argi], "-h") == 0)) { usage(stdout); free(include_dirs); return 0; }
+        if (argc - argi != 1) { free(include_dirs); return command_usage("dump"); }
+        if (argv[argi][0] == '-') { int r = invalid_option(argv[argi]); free(include_dirs); return r; }
+        ir_init(&ir); load_ir(&ir, argv[argi]); dump_ir(&ir); ir_free(&ir); free(include_dirs); return 0;
     }
 
-    fprintf(stderr, "cxxe: error: unknown command '%s'\n", argv[1]);
+    free(include_dirs);
+    fprintf(stderr, "cxxe: error: unknown command '%s'\n", command);
     fprintf(stderr, "Try 'cxxe.exe --help' for more information.\n");
     return 2;
 }
