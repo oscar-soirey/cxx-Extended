@@ -3,7 +3,7 @@
 ; Non-commercial use only.
 
 #define MyAppName "C++ Extended"
-#define MyAppVersion "v0.1"
+#define MyAppVersion "v0.2"
 #define MyAppPublisher "Oscar Soirey"
 #define MyAppURL "https://www.example.com/"
 #define EscapeConstArgument(Value) StringChange(StringChange(StringChange(Value, "%", "%25"), ",", "%2c"), "}", "%7d")
@@ -25,7 +25,7 @@ AllowNoIcons=yes
 InfoAfterFile=S:\Horizon\c++e\compiler\README.md
 ; Uncomment the following line to run in non administrative install mode (install for current user only).
 ;PrivilegesRequired=lowest
-OutputDir=S:\Horizon\c++e\compiler\dist
+OutputDir=S:\Horizon\c++e\compiler\dist\windows
 OutputBaseFilename=cxxe-x64windows-0.1
 SetupIconFile=S:\Horizon\c++e\com\icon.ico
 WizardImageFile=S:\Horizon\c++e\com\icon-white.bmp

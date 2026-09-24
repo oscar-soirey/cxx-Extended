@@ -1,8 +1,9 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" type="image/png" href="assets/icon-transparent_white_line.png">
 <title>C++Extended (cxxe)</title>
 <style>
   * { box-sizing: border-box; }
@@ -22,6 +23,54 @@
   th, td { border: 1px solid #ccc; padding: 6px 10px; text-align: left; }
   th { background: #eee; }
   .note { border-left: 4px solid #222; background: #f3f3f3; padding: 8px 14px; margin: 16px 0; }
+
+  .release-list { margin: 16px 0; }
+  .release-card { border: 1px solid #ccc; padding: 18px; margin: 16px 0; background: #f8f8f8; border-radius: 6px; }
+  .release-card h3 { margin: 0 0 6px; }
+  .release-meta { color: #666; font-size: 14px; margin-bottom: 12px; }
+  .release-description { margin: 10px 0 14px; white-space: pre-wrap; }
+  .release-assets { list-style: none; padding: 0; margin: 12px 0 0; }
+  .release-assets li { margin: 8px 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .asset-name {
+    font-family: ui-monospace, Consolas, monospace;
+    color: #222;
+  }
+  .download-button {
+    display: inline-block;
+    padding: 8px 14px;
+    background: #222;
+    color: #fff;
+    text-decoration: none;
+    border-radius: 5px;
+    font-weight: 600;
+  }
+  .download-button:hover, .download-button:focus-visible {
+    background: #444;
+    text-decoration: underline;
+  }
+  .release-link {
+    display: inline-block;
+    margin-top: 10px;
+    color: #222;
+  }
+
+  .release-card h3 { margin-top: 0; margin-bottom: 8px; }
+  .release-assets { margin: 12px 0 0; padding-left: 20px; }
+  .download-button {
+    display: inline-block;
+    margin-top: 10px;
+    padding: 9px 16px;
+    background: #222;
+    color: #fff;
+    text-decoration: none;
+    border-radius: 5px;
+    font-weight: 600;
+  }
+  .download-button:hover, .download-button:focus-visible {
+    background: #444;
+    text-decoration: underline;
+  }
+
   @media (max-width: 760px) {
     aside { position: static; width: auto; }
     main { margin-left: 0; padding: 24px 20px; }
@@ -35,67 +84,83 @@
   <div class="name">C++Extended</div>
   <nav>
     <a href="#introduction">Introduction</a>
-    <a href="#statut">Statut des fonctionnalités</a>
-    <a href="#compatibilite">Compatibilité C++</a>
-    <a href="#parametres">Paramètres nommés</a>
-    <a href="#decorateurs">Décorateurs natifs</a>
-    <a href="#custom">Décorateurs custom</a>
-    <a href="#cycle-de-vie">Décorateurs de cycle de vie</a>
+    <a href="#download">Download</a>
+    <a href="#repository">Source Code</a>
+    <a href="#statut">Feature Status</a>
+    <a href="#compatibilite">C++ Compatibility</a>
+    <a href="#parametres">Named Parameters</a>
+    <a href="#decorateurs">Native Decorators</a>
+    <a href="#custom">Custom decorators</a>
+    <a href="#cycle-de-vie">Lifecycle Decorators</a>
     <a href="#signals">Signals</a>
     <a href="#defer">defer</a>
-    <a href="#enums">Enums introspectables</a>
+    <a href="#enums">Inspectable Enums</a>
     <a href="#properties">Properties</a>
-    <a href="#ioutput">Redirection (IOutput)</a>
-    <a href="#cmake">Toolchain CMake</a>
+    <a href="#ioutput">Output Output Redirection (IOutput)</a>
+    <a href="#cmake">CMake Toolchain</a>
     <a href="#concepts">Concepts</a>
-    <a href="#notes">Notes et limites</a>
+    <a href="#notes">Notes and Limitations</a>
   </nav>
 </aside>
 
 <main>
   <h1 id="introduction">C++Extended (cxxe)</h1>
-  <p>Le C++ est puissant, mais il traîne des décennies de cérémonie : de la plomberie pour observer une variable, du boilerplate pour les getters, des macros fragiles pour convertir un <code>enum</code> en chaîne, des destructeurs détournés pour imiter <code>finally</code>.</p>
-  <p><strong>C++Extended</strong> (compilateur : <code>cxxe</code>) est un sur-ensemble du C++ qui garde <strong>100 % des fonctionnalités du C++</strong> et ajoute une couche d'ergonomie moderne : décorateurs, signals, <code>defer</code>, properties natives, réflexion à l'exécution, etc. Le principe est simple : <code>cxxe</code> transforme votre code étendu en C++ standard, sans rien retirer au langage d'origine.</p>
-  <p>Il n'y a pas de nouveau langage à apprendre. Vous étendez celui que vous connaissez déjà.</p>
+  <p>C++ is powerful, but it carries decades of ceremony: plumbing to observe a variable, boilerplate for getters, fragile macros for converting an <code>enum</code> to a string, and misused destructors to imitate <code>finally</code>.</p>
+  <p><strong>C++Extended</strong> (compiler: <code>cxxe</code>) is a C++ superset that keeps <strong>100% of C++ features</strong> and adds a layer of modern ergonomics: decorators, signals, <code>defer</code>, native properties, runtime reflection, and more. The principle is simple: <code>cxxe</code> transforms your extended code into standard C++, without removing anything from the original language.</p>
+  <p>There is no new language to learn. You simply extend the one you already know.</p>
 
-  <h2 id="statut">Statut des fonctionnalités</h2>
+
+  <h2 id="download">Download</h2>
+  <p>Download C++Extended releases directly from GitHub.</p>
+  <div id="releases-list" class="release-list">
+    <div class="note"><strong>Loading releases...</strong></div>
+  </div>
+
+  <h2 id="repository">Source Code</h2>
+  <p>
+    <a href="https://github.com/oscar-soirey/cxx-Extended" target="_blank" rel="noopener noreferrer">
+      View the C++Extended source code on GitHub
+    </a>
+  </p>
+
+  <h2 id="statut">Feature Status</h2>
   <table>
-    <tr><th>Fonctionnalité</th><th>Statut</th></tr>
-    <tr><td>Toutes les fonctionnalités du C++</td><td>Disponible</td></tr>
-    <tr><td>Paramètres nommés</td><td>Disponible</td></tr>
-    <tr><td>Décorateurs natifs (<code>@register</code>, <code>@exposed</code>, …)</td><td>Disponible</td></tr>
-    <tr><td>Décorateurs custom</td><td>Disponible</td></tr>
-    <tr><td><code>@deprecated</code>, <code>@since</code>, <code>@experimental</code></td><td>Disponible</td></tr>
-    <tr><td>Signals (<code>signal:</code>)</td><td>Disponible</td></tr>
-    <tr><td><code>defer</code></td><td>Disponible</td></tr>
-    <tr><td>Enums introspectables</td><td>Disponible</td></tr>
-    <tr><td>Properties (<code>property</code>)</td><td>Disponible</td></tr>
-    <tr><td>Redirection des sorties (<code>IOutput</code>)</td><td>Disponible</td></tr>
-    <tr><td>Toolchain CMake</td><td>Disponible</td></tr>
-    <tr><td>Templates sur les décorateurs</td><td>Prévu</td></tr>
+    <tr><th>Feature</th><th>Status</th></tr>
+    <tr><td>All C++ features</td><td>Available</td></tr>
+    <tr><td>Named Parameters</td><td>Available</td></tr>
+    <tr><td>Native Decorators (<code>@register</code>, <code>@exposed</code>, …)</td><td>Available</td></tr>
+    <tr><td>Custom decorators</td><td>Available</td></tr>
+    <tr><td><code>@deprecated</code>, <code>@since</code>, <code>@experimental</code></td><td>Available</td></tr>
+    <tr><td>Signals (<code>signal:</code>)</td><td>Abandoned</td></tr>
+    <tr><td><code>defer</code></td><td>Available</td></tr>
+    <tr><td>Inspectable Enums</td><td>Available</td></tr>
+    <tr><td>Properties (<code>property</code>)</td><td>Available</td></tr>
+    <tr><td>Redirection des sorties (<code>IOutput</code>)</td><td>Available</td></tr>
+    <tr><td>CMake Toolchain</td><td>Available</td></tr>
+    <tr><td>Decorator templates</td><td>Planned</td></tr>
     <tr><td>Type <code>dynamic</code></td><td>Concept</td></tr>
     <tr><td>Pattern matching (<code>match</code>)</td><td>Concept</td></tr>
-    <tr><td>JSON / XML / autres formats</td><td>Concept</td></tr>
-    <tr><td>Sérialisation automatique (<code>@serializable</code>)</td><td>Concept</td></tr>
+    <tr><td>JSON / XML / other formats</td><td>Concept</td></tr>
+    <tr><td>Automatic serialization (<code>@serializable</code>)</td><td>Concept</td></tr>
   </table>
 
-  <h2 id="compatibilite">Compatibilité C++</h2>
-  <p>C++Extended est un <strong>sur-ensemble</strong> du C++ : tout code C++ valide est un code C++Extended valide. Un projet existant peut donc être migré fichier par fichier.</p>
+  <h2 id="compatibilite">C++ Compatibility</h2>
+  <p>C++Extended is a <strong>superset</strong> of C++: any valid C++ code is also valid C++Extended code. An existing project can therefore be migrated file by file.</p>
 
-  <h2 id="parametres">Paramètres nommés</h2>
-  <p>Les arguments peuvent être passés par nom, dans n'importe quel ordre.</p>
+  <h2 id="parametres">Named Parameters</h2>
+  <p>Arguments can be passed by name, in any order.</p>
 <pre><code>int add(int a, int b);
 
 int main() {
     int r = add(b=5, a=4);
 }</code></pre>
 
-  <h2 id="decorateurs">Décorateurs natifs et réflexion</h2>
-  <p>Les décorateurs natifs permettent d'enregistrer des classes et d'exposer des membres pour y accéder <strong>à l'exécution</strong> par leur nom.</p>
+  <h2 id="decorateurs">Native Decorators et réflexion</h2>
+  <p>Native decorators allow classes to be registered and members to be exposed so they can be accessed <strong>at runtime</strong> by name.</p>
   <table>
-    <tr><th>Décorateur</th><th>Rôle</th></tr>
-    <tr><td><code>@register</code></td><td>Enregistre la classe dans la factory.</td></tr>
-    <tr><td><code>@exposed</code></td><td>Expose un membre à la réflexion. Il doit être <code>public</code>.</td></tr>
+    <tr><th>Decorator</th><th>Role</th></tr>
+    <tr><td><code>@register</code></td><td>Registers the class in the factory.</td></tr>
+    <tr><td><code>@exposed</code></td><td>Exposes a member to reflection. It must be <code>public</code>.</td></tr>
   </table>
 <pre><code>@register
 class A {
@@ -103,49 +168,49 @@ public:
     @exposed int health;
 };</code></pre>
 
-  <h3>Créer des instances</h3>
-<pre><code>// Instancier par nom
+  <h3>Creating Instances</h3>
+<pre><code>// Instantiate by name
 A* obj = stde::factory_new("A");
 // transformé par cxxe en : new A()
 
-// Récupérer le type par nom
+// Get the type by name
 A* obj2 = new stde::factory_find("A")();
 // transformé par cxxe en : new A()</code></pre>
 
-  <h3>Accéder aux membres exposés</h3>
+  <h3>Accessing Exposed Members</h3>
 <pre><code>obj->get_member("health") = 4;
 // transformé par cxxe en : obj->health = 4;</code></pre>
 
-  <h3>Usage dynamique</h3>
-  <p>Tout est résolu <strong>à l'exécution</strong> : le nom peut venir d'une source inconnue à la compilation.</p>
+  <h3>Dynamic Usage</h3>
+  <p>Everything is resolved <strong>at runtime</strong>: the name can come from a source unknown at compile time.</p>
 <pre><code>stde::factory_new(unknown_string);</code></pre>
-  <div class="note">Un membre <code>@exposed</code> doit obligatoirement être <code>public</code>.</div>
+  <div class="note">An <code>@exposed</code> member must be <code>public</code>.</div>
 
-  <h2 id="custom">Décorateurs custom</h2>
-  <p>Vous pouvez déclarer vos propres décorateurs. Un décorateur reçoit la fonction décorée (<code>func</code>) et l'enveloppe comme vous le souhaitez.</p>
+  <h2 id="custom">Custom decorators</h2>
+  <p>You can declare your own decorators. A decorator receives the decorated function (<code>func</code>) and wraps it as you wish.</p>
 <pre><code>void @my_decorator() -> func(int a) {
     before();
     func(a);
     after();
 }</code></pre>
-  <p>Un décorateur peut aussi prendre des <strong>paramètres</strong> :</p>
+  <p>A decorator can also take <strong>parameters</strong>:</p>
 <pre><code>void @my_decorator(/* paramètres du décorateur */) -> func(int a) {
     before();
     func(a);
     after();
 }</code></pre>
-  <p>Utilisation :</p>
+  <p>Usage:</p>
 <pre><code>@my_decorator
 void work(int a) { /* ... */ }</code></pre>
-  <div class="note">Le support des <strong>templates</strong> sur les décorateurs est prévu pour une prochaine version.</div>
+  <div class="note">Support for <strong>templates</strong> on decorators is planned for a future version.</div>
 
-  <h2 id="cycle-de-vie">Décorateurs de cycle de vie</h2>
-  <p>Trois décorateurs standards documentent l'évolution de votre API.</p>
+  <h2 id="cycle-de-vie">Lifecycle Decorators</h2>
+  <p>Three standard decorators document the evolution of your API.</p>
   <table>
-    <tr><th>Décorateur</th><th>Description</th></tr>
-    <tr><td><code>@deprecated(msg)</code></td><td>Marque un élément comme obsolète, avec un message.</td></tr>
-    <tr><td><code>@since(version)</code></td><td>Indique la version où l'élément a été introduit.</td></tr>
-    <tr><td><code>@experimental(msg)</code></td><td>Signale une API instable, susceptible de changer.</td></tr>
+    <tr><th>Decorator</th><th>Description</th></tr>
+    <tr><td><code>@deprecated(msg)</code></td><td>Marks an element as deprecated, with a message.</td></tr>
+    <tr><td><code>@since(version)</code></td><td>Indicates the version in which the element was introduced.</td></tr>
+    <tr><td><code>@experimental(msg)</code></td><td>Marks an unstable API that may change.</td></tr>
   </table>
 <pre><code>@since("1.2")
 @deprecated("Use load_v2() instead")
@@ -154,14 +219,14 @@ void load();
 @experimental("The interface may change")
 void new_feature();</code></pre>
 
-  <h2 id="signals">Signals</h2>
-  <p>Un <code>signal</code> détecte les modifications d'une variable et exécute un bloc de code à chaque changement. Il fonctionne partout : portée globale, classes, structures, etc.</p>
+  <h2 id="signals">Signals — Abandoned</h2>
+  <p>A <code>signal</code> detects changes to a variable and executes a block of code whenever it changes. It works everywhere: global scope, classes, structures, etc.</p>
 <pre><code>int my_int = 0;
 
 signal: my_int {
     var_changed();
 }</code></pre>
-  <p>Dans une classe :</p>
+  <p>Inside a class:</p>
 <pre><code>class Player {
 public:
     int score = 0;
@@ -172,7 +237,7 @@ public:
 };</code></pre>
 
   <h2 id="defer">defer</h2>
-  <p><code>defer</code> exécute un bloc à la <strong>sortie de la portée courante</strong>, quel que soit le chemin de sortie.</p>
+  <p><code>defer</code> executes a block when <strong>leaving the current scope</strong>, regardless of the exit path.</p>
 <pre><code>void process() {
     FILE* f = fopen("data.txt", "r");
     defer { fclose(f); }
@@ -180,18 +245,18 @@ public:
     // ... utiliser f ...
 }   // fclose(f) est appelé ici</code></pre>
 
-  <h2 id="enums">Enums introspectables</h2>
-  <p>Les enums sont introspectables : conversion <code>enum → string</code>, conversion <code>string → enum</code> et autres opérations de réflexion.</p>
+  <h2 id="enums">Inspectable Enums</h2>
+  <p>Enums are introspectable: <code>enum → string</code> conversion, <code>string → enum</code> conversion, and other reflection operations.</p>
 <pre><code>enum class Color { Red, Green, Blue };</code></pre>
-  <p>Les fonctions d'introspection couvrent notamment :</p>
+  <p>Reflection functions notably include:</p>
   <ul>
-    <li>la conversion <code>enum → string</code> ;</li>
-    <li>la conversion <code>string → enum</code> ;</li>
-    <li>d'autres utilitaires de réflexion sur les valeurs de l'enum.</li>
+    <li><code>enum → string</code> conversion;</li>
+    <li><code>string → enum</code> conversion;</li>
+    <li>other reflection utilities for enum values.</li>
   </ul>
 
-  <h2 id="properties">Properties (getters/setters natifs)</h2>
-  <p>Les classes et structures supportent nativement les properties avec <code>get</code> et <code>set</code>, sans boilerplate.</p>
+  <h2 id="properties">Properties (Native Getters/Setters)</h2>
+  <p>Classes and structures natively support properties with <code>get</code> and <code>set</code>, without boilerplate.</p>
 <pre><code>class Character {
     int health;
 
@@ -201,42 +266,42 @@ public:
         set { health = clamp(value, 0, 100); }
     }
 };</code></pre>
-  <p>Utilisation :</p>
+  <p>Usage:</p>
 <pre><code>Character c;
 c.Health = 150;    // appelle le setter : health = 100
 int h = c.Health;  // appelle le getter</code></pre>
 
-  <h2 id="ioutput">Redirection des sorties (IOutput)</h2>
-  <p>Toutes les sorties peuvent être redirigées nativement, quel que soit le mécanisme utilisé dans le code :</p>
+  <h2 id="ioutput">Output Output Redirection (IOutput)</h2>
+  <p>All output can be redirected natively, regardless of the mechanism used in the code:</p>
   <ul>
     <li><code>std::cout</code></li>
     <li><code>printf</code></li>
     <li><code>std::print</code></li>
-    <li>et d'autres sorties standards</li>
+    <li>and other standard output mechanisms</li>
   </ul>
-  <p>La redirection repose sur l'interface <code>IOutput</code> : implémentez-la pour envoyer les sorties vers un fichier, une console d'éditeur, le réseau, un log, etc.</p>
+  <p>Redirection is based on the <code>IOutput</code> interface: implement it to send output to a file, an editor console, the network, a log, etc.</p>
 
-  <h2 id="cmake">Toolchain CMake</h2>
-  <p>C++Extended s'intègre à <strong>CMake</strong> via une toolchain dédiée. Les sources étendues sont traitées par <code>cxxe</code> avant la compilation C++ habituelle : le langage peut donc être adopté dans un projet existant sans changer le système de build.</p>
+  <h2 id="cmake">CMake Toolchain</h2>
+  <p>C++Extended integrates with <strong>CMake</strong> through a dedicated toolchain. Extended sources are processed by <code>cxxe</code> before the usual C++ compilation, so the language can be adopted in an existing project without changing the build system.</p>
 
-  <h2 id="concepts">Concepts (feuille de route)</h2>
-  <div class="note">Ces éléments sont des <strong>concepts</strong> à l'étude. Leur syntaxe et leur comportement ne sont pas définitifs, et ils ne sont pas encore implémentés.</div>
+  <h2 id="concepts">Concepts (Roadmap)</h2>
+  <div class="note">These elements are <strong>concepts</strong> under consideration. Their syntax and behavior are not final, and they are not yet implemented.</div>
 
   <h3>Type dynamic</h3>
-  <p>Un type dont le type réel n'est connu qu'à l'<strong>exécution</strong>, comme en Python. Il permet par exemple de stocker des valeurs de types différents dans un seul conteneur.</p>
+  <p>A type whose actual type is only known at <strong>runtime</strong>, like in Python. For example, it could store values of different types in a single container.</p>
 <pre><code>std::vector&lt;dynamic&gt; items = { 42, "hello", 3.14 };</code></pre>
 
   <h3>Pattern matching</h3>
-  <p>Une instruction <code>match</code> traite une valeur selon son type. Dans chaque branche, la valeur est déjà convertie vers le type correspondant.</p>
+  <p>A <code>match</code> statement handles a value according to its type. In each branch, the value is already converted to the corresponding type.</p>
 <pre><code>match value {
     int: printf("%d\n", value);  // value est déjà un int ici
 }</code></pre>
 
-  <h3>JSON, XML et autres formats de données</h3>
-  <p>Des contrôles natifs pour manipuler les formats de données courants (JSON, XML, etc.) directement depuis le langage.</p>
+  <h3>JSON, XML, and Other Data Formats</h3>
+  <p>Native facilities for manipulating common data formats (JSON, XML, etc.) directly from the language.</p>
 
-  <h3>Sérialisation automatique</h3>
-  <p>Le décorateur <code>@serializable</code> générera automatiquement la sérialisation et la désérialisation d'une classe.</p>
+  <h3>Automatic Serialization</h3>
+  <p>The <code>@serializable</code> decorator will automatically generate serialization and deserialization for a class.</p>
 <pre><code>@serializable
 class Config {
 public:
@@ -244,13 +309,131 @@ public:
     int height;
 };</code></pre>
 
-  <h2 id="notes">Notes et limites</h2>
+  <h2 id="notes">Notes and Limitations</h2>
   <ul>
-    <li>Les exemples de cette documentation illustrent la syntaxe ; les noms exacts des fonctions de la bibliothèque <code>stde</code> peuvent varier selon les versions.</li>
+    <li>The examples in this documentation illustrate the syntax; the exact names of functions in the <code>stde</code> library may vary between versions.</li>
     <li>Un membre <code>@exposed</code> doit être <code>public</code>.</li>
-    <li>Les fonctionnalités marquées « Concept » ne sont pas encore implémentées.</li>
+    <li>Features marked as “Concept” are not implemented yet.</li>
   </ul>
 </main>
+
+
+
+
+
+<script>
+(async function loadReleases() {
+  const container = document.getElementById("releases-list");
+  const apiUrl = "https://api.github.com/repos/oscar-soirey/cxx-Extended/releases?per_page=100";
+
+  try {
+    const response = await fetch(apiUrl, {
+      headers: {
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2026-03-10"
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error("GitHub API returned HTTP " + response.status);
+    }
+
+    const releases = await response.json();
+
+    if (!Array.isArray(releases) || releases.length === 0) {
+      container.innerHTML = `
+        <div class="note">
+          <strong>No releases found.</strong>
+          <p>
+            Check the
+            <a href="https://github.com/oscar-soirey/cxx-Extended/releases"
+               target="_blank" rel="noopener noreferrer">
+              GitHub Releases page
+            </a>.
+          </p>
+        </div>`;
+      return;
+    }
+
+    container.innerHTML = releases.map(release => {
+      const assets = Array.isArray(release.assets) ? release.assets : [];
+      const published = release.published_at
+        ? new Date(release.published_at).toLocaleDateString()
+        : "Unpublished";
+
+      const prereleaseLabel = release.prerelease
+        ? ' <strong>(Pre-release)</strong>'
+        : '';
+
+      const assetsHtml = assets.length
+        ? `
+          <ul class="release-assets">
+            ${assets.map(asset => `
+              <li>
+                <a class="asset-name"
+                   href="${escapeHtml(asset.browser_download_url)}">
+                  ${escapeHtml(asset.name)}
+                </a>
+              </li>
+            `).join("")}
+          </ul>`
+        : `
+          <p>
+            <a class="download-button"
+               href="${escapeHtml(release.html_url)}"
+               target="_blank"
+               rel="noopener noreferrer">
+              View Release
+            </a>
+          </p>`;
+
+      const description = release.body
+        ? `<div class="release-description">${escapeHtml(release.body)}</div>`
+        : '';
+
+      return `
+        <article class="release-card">
+          <h3>${escapeHtml(release.name || release.tag_name || "Untitled Release")}${prereleaseLabel}</h3>
+          <div class="release-meta">
+            Version: <strong>${escapeHtml(release.tag_name || "Unknown")}</strong>
+            · Published: ${escapeHtml(published)}
+          </div>
+          ${description}
+          <strong>Downloads</strong>
+          ${assetsHtml}
+          <a class="release-link"
+             href="${escapeHtml(release.html_url)}"
+             target="_blank"
+             rel="noopener noreferrer">
+            View release details on GitHub
+          </a>
+        </article>`;
+    }).join("");
+  } catch (error) {
+    container.innerHTML = `
+      <div class="note">
+        <strong>Unable to load GitHub releases.</strong>
+        <p>
+          You can view and download all releases directly from
+          <a href="https://github.com/oscar-soirey/cxx-Extended/releases"
+             target="_blank" rel="noopener noreferrer">
+            GitHub Releases
+          </a>.
+        </p>
+      </div>`;
+    console.error("Failed to load GitHub releases:", error);
+  }
+
+  function escapeHtml(value) {
+    return String(value)
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+})();
+</script>
 
 </body>
 </html>
