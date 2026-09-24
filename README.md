@@ -1,4 +1,4 @@
-!\[C++Extended logo](./assets/icon.png)
+!\[C++Extended logo](./assets/icon-transparent_white_line.png)
 
 # C++Extended (cxxe)
 
