@@ -1,3 +1,5 @@
+#include "cxxe_runtime.hpp"
+namespace cxxe_generated { static void register_all(); }
 #include <iostream>
 #include <vector>
 
@@ -58,32 +60,36 @@ for (auto& value : values) {
 */
 
 
-void Show(dynamic value)
+void Show(stde::DynamicValue value)
 {
-    match value
-    {
-        int:
-            std::cout << "Entier : " << value << std::endl;
-
-        float:
-            std::cout << "Float : " << value << std::endl;
-
-        const char*:
-            std::cout << "String : " << value << std::endl;
-
-        default:
-            std::cout << "Type inconnu" << std::endl;
+    { auto&& __cxxe_match_value = (value);
+    if (__cxxe_match_value.is<int>()) {
+        auto&& value = __cxxe_match_value.as<int>();
+std::cout << "Entier : " << value << std::endl;
     }
+    else if (__cxxe_match_value.is<float>()) {
+        auto&& value = __cxxe_match_value.as<float>();
+std::cout << "Float : " << value << std::endl;
+    }
+    else if (__cxxe_match_value.is<const char*>()) {
+        auto&& value = __cxxe_match_value.as<const char*>();
+std::cout << "String : " << value << std::endl;
+    }
+    else {
+std::cout << "Type inconnu" << std::endl;
+    }
+}
+
 }
 
 
 int main(int argc, char** argv)
 {
-	dynamic value = 42;
+	stde::DynamicValue value = 42;
 	value.is<int>();
 	value.as<int>();
 
-	std::vector<dynamic> dv = {42, 3.14f, "hello"};
+	std::vector<stde::DynamicValue> dv = {42, 3.14f, "hello"};
 
 	for (const auto& v : dv) {
 		if (v.is<int>())
@@ -101,4 +107,19 @@ int main(int argc, char** argv)
 	}
 	
 	return 0;
+}
+
+namespace cxxe_generated {
+static void register_all() {
+    static const bool initialized = []() {
+        return true;
+    }();
+    (void)initialized;
+}
+}
+namespace {
+struct CxxeAutoRegistration {
+    CxxeAutoRegistration() { cxxe_generated::register_all(); }
+};
+static CxxeAutoRegistration cxxe_auto_registration;
 }

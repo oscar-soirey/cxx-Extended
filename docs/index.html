@@ -138,8 +138,8 @@
     <tr><td>Redirection des sorties (<code>IOutput</code>)</td><td>Available</td></tr>
     <tr><td>CMake Toolchain</td><td>Available</td></tr>
     <tr><td>Decorator templates</td><td>Planned</td></tr>
-    <tr><td>Type <code>dynamic</code></td><td>Concept</td></tr>
-    <tr><td>Pattern matching (<code>match</code>)</td><td>Concept</td></tr>
+    <tr><td>Type <code>dynamic</code></td><td>Testing Phase</td></tr>
+    <tr><td>Pattern matching (<code>match</code>)</td><td>Testing Phase</td></tr>
     <tr><td>JSON / XML / other formats</td><td>Concept</td></tr>
     <tr><td>Automatic serialization (<code>@serializable</code>)</td><td>Concept</td></tr>
   </table>
@@ -202,7 +202,7 @@ A* obj2 = new stde::factory_find("A")();
   <p>Usage:</p>
 <pre><code>@my_decorator
 void work(int a) { /* ... */ }</code></pre>
-  <div class="note">Support for <strong>templates</strong> on decorators is planned for a future version.</div>
+  <div class="note">Support for <strong>templates</strong> on decorators is available.</div>
 
   <h2 id="cycle-de-vie">Lifecycle Decorators</h2>
   <p>Three standard decorators document the evolution of your API.</p>
@@ -284,17 +284,68 @@ int h = c.Health;  // appelle le getter</code></pre>
   <h2 id="cmake">CMake Toolchain</h2>
   <p>C++Extended integrates with <strong>CMake</strong> through a dedicated toolchain. Extended sources are processed by <code>cxxe</code> before the usual C++ compilation, so the language can be adopted in an existing project without changing the build system.</p>
 
-  <h2 id="concepts">Concepts (Roadmap)</h2>
-  <div class="note">These elements are <strong>concepts</strong> under consideration. Their syntax and behavior are not final, and they are not yet implemented.</div>
+  <h2 id="concepts">Features in Testing &amp; Roadmap</h2>
+  <div class="note">These features are currently in the <strong>testing phase</strong>. Their syntax and behavior may still change based on testing and feedback.</div>
 
-  <h3>Type dynamic</h3>
-  <p>A type whose actual type is only known at <strong>runtime</strong>, like in Python. For example, it could store values of different types in a single container.</p>
-<pre><code>std::vector&lt;dynamic&gt; items = { 42, "hello", 3.14 };</code></pre>
+  <h3>Type dynamic <small>(Testing Phase)</small></h3>
+  <p>A type whose actual type is only known at <strong>runtime</strong>. A <code>dynamic</code> value can hold values of different types and provides <code>is&lt;T&gt;()</code> for type checking and <code>as&lt;T&gt;()</code> for accessing the stored value.</p>
+<pre><code>dynamic value = 42;
 
-  <h3>Pattern matching</h3>
-  <p>A <code>match</code> statement handles a value according to its type. In each branch, the value is already converted to the corresponding type.</p>
-<pre><code>match value {
-    int: printf("%d\n", value);  // value est déjà un int ici
+if (value.is&lt;int&gt;()) {
+    int x = value.as&lt;int&gt;();
+    std::cout &lt;&lt; "int = " &lt;&lt; x &lt;&lt; std::endl;
+}
+
+value = 3.14f;
+std::cout &lt;&lt; value.as&lt;float&gt;() &lt;&lt; std::endl;
+
+value = std::string("hello");
+std::cout &lt;&lt; value.as&lt;std::string&gt;().c_str() &lt;&lt; std::endl;</code></pre>
+
+  <p><code>dynamic</code> can also be used inside standard containers:</p>
+<pre><code>std::vector&lt;dynamic&gt; values = { 42, 3.14f, "hello", true };
+
+for (const auto&amp; value : values) {
+    if (value.is&lt;int&gt;())
+        std::cout &lt;&lt; "int: " &lt;&lt; value.as&lt;int&gt;() &lt;&lt; std::endl;
+    else if (value.is&lt;float&gt;())
+        std::cout &lt;&lt; "float: " &lt;&lt; value.as&lt;float&gt;() &lt;&lt; std::endl;
+    else if (value.is&lt;const char*&gt;())
+        std::cout &lt;&lt; "string: " &lt;&lt; value.as&lt;const char*&gt;() &lt;&lt; std::endl;
+    else if (value.is&lt;bool&gt;())
+        std::cout &lt;&lt; "bool: " &lt;&lt; value.as&lt;bool&gt;() &lt;&lt; std::endl;
+}</code></pre>
+
+  <div class="note">Calling <code>as&lt;T&gt;()</code> with a type that does not match the stored value results in a runtime error.</div>
+
+  <h3>Pattern matching <small>(Testing Phase)</small></h3>
+  <p>A <code>match</code> statement handles a <code>dynamic</code> value according to its runtime type. Inside each branch, <code>value</code> is already treated as the corresponding type.</p>
+<pre><code>void Show(dynamic value)
+{
+    match value
+    {
+        int:
+            std::cout &lt;&lt; "Integer: " &lt;&lt; value &lt;&lt; std::endl;
+
+        float:
+            std::cout &lt;&lt; "Float: " &lt;&lt; value &lt;&lt; std::endl;
+
+        const char*:
+            std::cout &lt;&lt; "String: " &lt;&lt; value &lt;&lt; std::endl;
+
+        default:
+            std::cout &lt;&lt; "Unknown type" &lt;&lt; std::endl;
+    }
+}
+
+int main()
+{
+    std::vector&lt;dynamic&gt; values = { 42, 3.14f, "hello" };
+
+    for (const auto&amp; value : values)
+        Show(value);
+
+    return 0;
 }</code></pre>
 
   <h3>JSON, XML, and Other Data Formats</h3>

@@ -53,7 +53,7 @@
 #endif
 
 #define CPIR_MAGIC "CPIR"
-#define CPIR_VERSION 10u
+#define CPIR_VERSION 11u
 #define ARRAY_GROW_MIN 64u
 
 /* ------------------------------------------------------------------------- */
@@ -469,7 +469,6 @@ typedef enum {
     N_METHOD,
     N_CONSTRUCTOR,
     N_DESTRUCTOR,
-    N_CONVERSION_FUNCTION,
     N_OPERATOR_FUNCTION,
     N_PARAM_DECL,
     N_RETURN,
@@ -626,7 +625,7 @@ static const char *node_kind_name(NodeKind k) {
         K(N_UNION); K(N_ENUM); K(N_ENUMERATOR); K(N_TEMPLATE); K(N_TEMPLATE_TYPE_PARAM);
         K(N_TEMPLATE_NON_TYPE_PARAM); K(N_TEMPLATE_TEMPLATE_PARAM); K(N_CONCEPT); K(N_REQUIRES);
         K(N_TYPEDEF); K(N_ALIAS); K(N_FRIEND); K(N_FIELD_DECL); K(N_PROPERTY); K(N_PROPERTY_GET); K(N_PROPERTY_SET); K(N_PROPERTY_ACCESS); K(N_VAR_DECL); K(N_VAR_ASSIGN);
-        K(N_FUNCTION); K(N_METHOD); K(N_CONSTRUCTOR); K(N_DESTRUCTOR); K(N_CONVERSION_FUNCTION);
+        K(N_FUNCTION); K(N_METHOD); K(N_CONSTRUCTOR); K(N_DESTRUCTOR);
         K(N_OPERATOR_FUNCTION); K(N_PARAM_DECL); K(N_RETURN); K(N_IF_STMT); K(N_FOR_STMT);
         K(N_RANGE_FOR_STMT); K(N_WHILE_STMT); K(N_DO_STMT); K(N_SWITCH_STMT); K(N_MATCH_STMT); K(N_MATCH_CASE); K(N_CASE_STMT);
         K(N_DEFAULT_STMT); K(N_BREAK_STMT); K(N_CONTINUE_STMT); K(N_GOTO_STMT); K(N_LABEL_STMT);
@@ -1344,30 +1343,6 @@ static void parse_parameters(Parser *p, int64_t fn, size_t a, size_t b) {
 
 static void parse_region_items(Parser *p, size_t a, size_t b, int64_t parent, int class_context, const char *class_name);
 
-static int parse_conversion_decl(Parser *p, size_t a, size_t b, int64_t parent, size_t *end_out) {
-    size_t arrow = SIZE_MAX, brace = SIZE_MAX, close = SIZE_MAX, i;
-    if (a + 1 > b || !str_eq(pt(p, a), "@") || !str_eq(pt(p, a + 1), "conversion")) return 0;
-    for (i = a + 2; i <= b; ++i) {
-        if (str_eq(pt(p, i), "->")) { arrow = i; break; }
-        if (str_eq(pt(p, i), "{")) break;
-    }
-    if (arrow == SIZE_MAX || arrow <= a + 2 || arrow + 1 > b) return 0;
-    for (i = arrow + 1; i <= b; ++i) if (str_eq(pt(p, i), "{")) { brace = i; break; }
-    if (brace == SIZE_MAX || brace <= arrow + 1) return 0;
-    close = find_matching(p, brace, b + 1);
-    if (close > b) return 0;
-    {
-        int64_t n = ir_add_node(p->ir, N_CONVERSION_FUNCTION, a, close, parent);
-        node_set_type(p->ir, n, token_range_text(p, a + 2, arrow - 1));
-        node_set_return(p->ir, n, token_range_text(p, arrow + 1, brace - 1));
-        node_set_value(p->ir, n, token_range_text(p, a, close));
-        p->ir->nodes[n].aux = brace;
-        ir_add_child(p->ir, parent, n);
-    }
-    if (end_out) *end_out = close;
-    return 1;
-}
-
 static void add_property_assignment_nodes_in_range(Parser *p, int64_t parent, size_t a, size_t b);
 
 static int parse_function_like(Parser *p, size_t a, size_t b, int64_t parent, const char *class_name, size_t open_paren, int64_t *out_fn) {
@@ -2044,13 +2019,6 @@ static void parse_region_items(Parser *p, size_t a, size_t b, int64_t parent, in
         if (pk(p, i) == TK_PP) {
             parse_preprocessor(p, i, parent);
             i++;
-            continue;
-        }
-
-        if (str_eq(pt(p, i), "@") && i + 1 <= b && str_eq(pt(p, i + 1), "conversion")) {
-            size_t conversion_end = SIZE_MAX;
-            if (!parse_conversion_decl(p, i, b, parent, &conversion_end)) die("CXXE: invalid @conversion declaration");
-            i = conversion_end + 1;
             continue;
         }
 
@@ -2802,7 +2770,7 @@ static int resolve_named_args(IR *ir) {
             IRNode *fn = &ir->nodes[f];
             int matches = 0;
             int64_t arg;
-            if (!(fn->kind == N_FUNCTION || fn->kind == N_METHOD || fn->kind == N_CONSTRUCTOR || fn->kind == N_OPERATOR_FUNCTION || fn->kind == N_CONVERSION_FUNCTION)) continue;
+            if (!(fn->kind == N_FUNCTION || fn->kind == N_METHOD || fn->kind == N_CONSTRUCTOR || fn->kind == N_OPERATOR_FUNCTION)) continue;
             if (call->resolved_name && *call->resolved_name && fn->qualified && *fn->qualified)
                 matches = strcmp(call->resolved_name, fn->qualified) == 0;
             else if (call->name && fn->name)
@@ -2861,7 +2829,7 @@ static int find_matching_function(const IR *ir, const IRNode *call, int64_t *out
         size_t params = 0;
         int matches = 1;
         if (!(fn->kind == N_FUNCTION || fn->kind == N_METHOD || fn->kind == N_CONSTRUCTOR ||
-              fn->kind == N_OPERATOR_FUNCTION || fn->kind == N_CONVERSION_FUNCTION)) continue;
+              fn->kind == N_OPERATOR_FUNCTION)) continue;
         if (call->resolved_name && *call->resolved_name && fn->qualified && *fn->qualified) {
             if (strcmp(call->resolved_name, fn->qualified) != 0) {
                 if (!(call->name && fn->name && strcmp(call->name, fn->name) == 0)) continue;
@@ -3088,7 +3056,7 @@ static int class_has_runtime_features(const IR *ir) {
         if (n->kind == N_GET_MEMBER && (n->flags & NF_GET_MEMBER_RUNTIME)) return 1;
         if (n->kind == N_FUNC_CALL && n->qualified &&
             (strcmp(n->qualified, "stde::factory_new") == 0 || strcmp(n->qualified, "stde::factory_find") == 0)) return 1;
-        if (n->kind == N_CONVERSION_FUNCTION || n->kind == N_MATCH_STMT) return 1;
+        if (n->kind == N_MATCH_STMT) return 1;
     }
     for (i = 0; i < ir->tokens.n; ++i) if (strcmp(ir->tokens.v[i].text, "dynamic") == 0) return 1;
     return 0;
@@ -3293,23 +3261,6 @@ static void emit_registered_classes(const IR *ir, Str *out) {
             else if (m->kind == N_METHOD) emit_registered_member_method(ir, cls, m, out);
             else die("CXXE: unsupported @exposed member kind");
             str_put(out, ";\n");
-        }
-    }
-    for (i = 0; i < ir->node_count; ++i) {
-        const IRNode *conv = &ir->nodes[i];
-        if (conv->kind == N_CONVERSION_FUNCTION) {
-            size_t brace = conv->aux < ir->tokens.n ? (size_t)conv->aux : SIZE_MAX;
-            if (!conv->type || !*conv->type || !conv->return_type || !*conv->return_type || brace == SIZE_MAX || brace + 1 >= (size_t)conv->last_tok)
-                die("CXXE: malformed @conversion");
-            str_put(out, "        stde::register_conversion<");
-            str_put(out, conv->type); str_put(out, ", "); str_put(out, conv->return_type);
-            str_put(out, ">([](const "); str_put(out, conv->type); str_put(out, "& value) -> "); str_put(out, conv->return_type); str_put(out, " {");
-            if (brace + 1 <= (size_t)conv->last_tok - 1) {
-                uint64_t bs = ir->tokens.v[brace + 1].byte_start;
-                uint64_t be = ir->tokens.v[(size_t)conv->last_tok - 1].byte_end;
-                emit_source_range_with_properties(ir, out, bs, be);
-            }
-            str_put(out, " });\n");
         }
     }
     str_put(out, "        return true;\n    }();\n    (void)initialized;\n}\n}\n");
@@ -4074,7 +4025,7 @@ static int node_needs_native_emit(const IR *ir, const IRNode *n) {
     if (n->kind == N_GET_MEMBER) return 1;
     if (n->kind == N_FUNC_CALL && node_is_factory_runtime_call(n)) return 1;
     if (n->kind == N_FUNC_CALL && node_is_named_call(ir, (int64_t)(n - ir->nodes))) return 1;
-    if (n->kind == N_MATCH_STMT || n->kind == N_CONVERSION_FUNCTION) return 1;
+    if (n->kind == N_MATCH_STMT) return 1;
     return 0;
 }
 
@@ -4111,7 +4062,7 @@ static void emit_cpp(const IR *ir, const char *path) {
             if (bs < cursor) continue;
             if (bs > ir->source_size || be > ir->source_size || be < bs) continue;
             emit_source_range_with_properties(ir, &out, cursor, bs);
-            if (n->kind == N_DECORATOR || n->kind == N_CUSTOM_DECORATOR || n->kind == N_CONVERSION_FUNCTION) { /* CXXE-only syntax. */ }
+            if (n->kind == N_DECORATOR || n->kind == N_CUSTOM_DECORATOR) { /* CXXE-only syntax. */ }
             else if (n->kind == N_MATCH_STMT) { emit_match_statement(ir, n, &out); }
             else if (n->kind == N_PROPERTY) { emit_property(ir, n, &out); }
             else if ((n->kind == N_FUNCTION || n->kind == N_METHOD) && function_has_custom_decorator(ir, n)) {
@@ -4312,7 +4263,6 @@ static const char CXXE_RUNTIME_HPP[] =
 "#define CXXE_RUNTIME_HPP\n"
 "\n"
 "#include <any>\n"
-"#include <functional>\n"
 "#include <memory>\n"
 "#include <mutex>\n"
 "#include <stdexcept>\n"
@@ -4323,45 +4273,6 @@ static const char CXXE_RUNTIME_HPP[] =
 "#include <utility>\n"
 "#include <vector>\n"
 "namespace stde {\n"
-"\n"
-"class ConversionRegistry {\n"
-"    struct Entry {\n"
-"        std::type_index from = typeid(void);\n"
-"        std::type_index to = typeid(void);\n"
-"        std::function<std::any(const std::any&)> convert;\n"
-"    };\n"
-"    mutable std::mutex mutex_;\n"
-"    std::vector<Entry> entries_;\n"
-"    ConversionRegistry() = default;\n"
-"public:\n"
-"    ConversionRegistry(const ConversionRegistry&) = delete;\n"
-"    ConversionRegistry& operator=(const ConversionRegistry&) = delete;\n"
-"    static ConversionRegistry& instance() { static ConversionRegistry r; return r; }\n"
-"\n"
-"    template <class From, class To, class F>\n"
-"    void register_conversion(F&& fn) {\n"
-"        std::lock_guard<std::mutex> lock(mutex_);\n"
-"        const auto from = std::type_index(typeid(From));\n"
-"        const auto to = std::type_index(typeid(To));\n"
-"        for (auto& e : entries_) if (e.from == from && e.to == to) {\n"
-"            e.convert = [fn = std::forward<F>(fn)](const std::any& v) { return std::any(fn(std::any_cast<const From&>(v))); };\n"
-"            return;\n"
-"        }\n"
-"        Entry e; e.from = from; e.to = to;\n"
-"        e.convert = [fn = std::forward<F>(fn)](const std::any& v) { return std::any(fn(std::any_cast<const From&>(v))); };\n"
-"        entries_.push_back(std::move(e));\n"
-"    }\n"
-"\n"
-"    std::any convert(const std::any& value, std::type_index to) const {\n"
-"        std::lock_guard<std::mutex> lock(mutex_);\n"
-"        const auto from = std::type_index(value.type());\n"
-"        for (const auto& e : entries_) if (e.from == from && e.to == to) return e.convert(value);\n"
-"        return std::any();\n"
-"    }\n"
-"};\n"
-"\n"
-"template <class From, class To, class F>\n"
-"void register_conversion(F&& fn) { ConversionRegistry::instance().template register_conversion<From, To>(std::forward<F>(fn)); }\n"
 "\n"
 "class DynamicValue {\n"
 "    std::any value_;\n"
@@ -4377,16 +4288,8 @@ static const char CXXE_RUNTIME_HPP[] =
 "    template <class T> bool is() const noexcept { return value_.has_value() && value_.type() == typeid(T); }\n"
 "    template <class T> T& as() { if (!is<T>()) throw std::bad_any_cast(); return std::any_cast<T&>(value_); }\n"
 "    template <class T> const T& as() const { if (!is<T>()) throw std::bad_any_cast(); return std::any_cast<const T&>(value_); }\n"
-"    template <class T> T get_as() const {\n"
-"        if (is<T>()) return std::any_cast<T>(value_);\n"
-"        std::any converted = ConversionRegistry::instance().convert(value_, std::type_index(typeid(T)));\n"
-"        if (!converted.has_value()) throw std::bad_any_cast();\n"
-"        return std::any_cast<T>(converted);\n"
-"    }\n"
-"    template <class T> T get() const { return get_as<T>(); }\n"
 "    template <class T, std::enable_if_t<!std::is_same_v<std::decay_t<T>, DynamicValue>, int> = 0>\n"
 "    DynamicValue& operator=(T&& value) { value_ = std::forward<T>(value); return *this; }\n"
-"    template <class T> operator T() const { return get_as<T>(); }\n"
 "};\n"
 "\n"
 "namespace detail {\n"
@@ -4741,7 +4644,7 @@ static const char CXXE_RUNTIME_HPP[] =
 "        auto member = find_member();\n"
 "        if (member->kind != MemberInfo::Kind::Field || !member->getter)\n"
 "            throw std::runtime_error(\"CXXE: exposed member is not a field: \" + name_);\n"
-"        return member->getter(object_).template get<T>();\n"
+"        return member->getter(object_).template as<T>();\n"
 "    }\n"
 "\n"
 "    template <class T>\n"
