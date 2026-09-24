@@ -53,7 +53,7 @@
 #endif
 
 #define CPIR_MAGIC "CPIR"
-#define CPIR_VERSION 9u
+#define CPIR_VERSION 10u
 #define ARRAY_GROW_MIN 64u
 
 /* ------------------------------------------------------------------------- */
@@ -479,6 +479,8 @@ typedef enum {
     N_WHILE_STMT,
     N_DO_STMT,
     N_SWITCH_STMT,
+    N_MATCH_STMT,
+    N_MATCH_CASE,
     N_CASE_STMT,
     N_DEFAULT_STMT,
     N_BREAK_STMT,
@@ -626,7 +628,7 @@ static const char *node_kind_name(NodeKind k) {
         K(N_TYPEDEF); K(N_ALIAS); K(N_FRIEND); K(N_FIELD_DECL); K(N_PROPERTY); K(N_PROPERTY_GET); K(N_PROPERTY_SET); K(N_PROPERTY_ACCESS); K(N_VAR_DECL); K(N_VAR_ASSIGN);
         K(N_FUNCTION); K(N_METHOD); K(N_CONSTRUCTOR); K(N_DESTRUCTOR); K(N_CONVERSION_FUNCTION);
         K(N_OPERATOR_FUNCTION); K(N_PARAM_DECL); K(N_RETURN); K(N_IF_STMT); K(N_FOR_STMT);
-        K(N_RANGE_FOR_STMT); K(N_WHILE_STMT); K(N_DO_STMT); K(N_SWITCH_STMT); K(N_CASE_STMT);
+        K(N_RANGE_FOR_STMT); K(N_WHILE_STMT); K(N_DO_STMT); K(N_SWITCH_STMT); K(N_MATCH_STMT); K(N_MATCH_CASE); K(N_CASE_STMT);
         K(N_DEFAULT_STMT); K(N_BREAK_STMT); K(N_CONTINUE_STMT); K(N_GOTO_STMT); K(N_LABEL_STMT);
         K(N_TRY_STMT); K(N_CATCH); K(N_THROW); K(N_CO_RETURN); K(N_CO_AWAIT); K(N_CO_YIELD);
         K(N_EXPR); K(N_FUNC_CALL); K(N_CALL_ARG); K(N_NAMED_ARG); K(N_MEMBER_CALL); K(N_GET_MEMBER); K(N_VAR_REF); K(N_MEMBER_ACCESS);
@@ -686,7 +688,7 @@ static int is_keyword(const char *s) {
         "reinterpret_cast","requires","return","short","signed","sizeof","static","static_assert",
         "static_cast","struct","switch","synchronized","template","this","thread_local","throw",
         "true","try","typedef","typeid","typename","union","unsigned","using","virtual","void",
-        "volatile","wchar_t","while","xor","xor_eq","module","import","override","final","transaction_safe",
+        "volatile","wchar_t","while","dynamic","match","xor","xor_eq","module","import","override","final","transaction_safe",
         "transaction_safe_dynamic","__attribute__","__declspec","nullptr","constinit","requires","concept",
         NULL
     };
@@ -1155,7 +1157,32 @@ static void add_expr_nodes(Parser *p, int64_t parent, size_t a, size_t b) {
 
     for (i = a; i <= b; ++i) {
         const char *t = pt(p, i);
-        if (str_eq(t, "this")) {
+        if (str_eq(t, "match")) {
+            size_t brace = SIZE_MAX, close = SIZE_MAX, j;
+            int mpar = 0, mbr = 0, mangle = 0;
+            for (j = i + 1; j <= b; ++j) {
+                const char *mt = pt(p, j);
+                if (str_eq(mt, "(")) mpar++;
+                else if (str_eq(mt, ")") && mpar) mpar--;
+                else if (str_eq(mt, "[")) mbr++;
+                else if (str_eq(mt, "]") && mbr) mbr--;
+                else if (str_eq(mt, "<")) mangle++;
+                else if (str_eq(mt, ">") && mangle) mangle--;
+                else if (str_eq(mt, "{") && !mpar && !mbr && !mangle) { brace = j; break; }
+            }
+            if (brace != SIZE_MAX) {
+                close = find_matching(p, brace, b + 1);
+                if (close <= b) {
+                    int64_t mn = ir_add_node(ir, N_MATCH_STMT, i, close, parent);
+                    node_set_value(ir, mn, token_range_text(p, i, close));
+                    ir->nodes[mn].aux = brace;
+                    ir_add_child(ir, parent, mn);
+                    i = close;
+                    continue;
+                }
+            }
+            die("CXXE: invalid match statement");
+        } else if (str_eq(t, "this")) {
             int64_t n = ir_add_node(ir, N_THIS_EXPR, i, i, parent);
             node_set_name(ir, n, "this");
             ir_add_child(ir, parent, n);
@@ -1317,6 +1344,30 @@ static void parse_parameters(Parser *p, int64_t fn, size_t a, size_t b) {
 
 static void parse_region_items(Parser *p, size_t a, size_t b, int64_t parent, int class_context, const char *class_name);
 
+static int parse_conversion_decl(Parser *p, size_t a, size_t b, int64_t parent, size_t *end_out) {
+    size_t arrow = SIZE_MAX, brace = SIZE_MAX, close = SIZE_MAX, i;
+    if (a + 1 > b || !str_eq(pt(p, a), "@") || !str_eq(pt(p, a + 1), "conversion")) return 0;
+    for (i = a + 2; i <= b; ++i) {
+        if (str_eq(pt(p, i), "->")) { arrow = i; break; }
+        if (str_eq(pt(p, i), "{")) break;
+    }
+    if (arrow == SIZE_MAX || arrow <= a + 2 || arrow + 1 > b) return 0;
+    for (i = arrow + 1; i <= b; ++i) if (str_eq(pt(p, i), "{")) { brace = i; break; }
+    if (brace == SIZE_MAX || brace <= arrow + 1) return 0;
+    close = find_matching(p, brace, b + 1);
+    if (close > b) return 0;
+    {
+        int64_t n = ir_add_node(p->ir, N_CONVERSION_FUNCTION, a, close, parent);
+        node_set_type(p->ir, n, token_range_text(p, a + 2, arrow - 1));
+        node_set_return(p->ir, n, token_range_text(p, arrow + 1, brace - 1));
+        node_set_value(p->ir, n, token_range_text(p, a, close));
+        p->ir->nodes[n].aux = brace;
+        ir_add_child(p->ir, parent, n);
+    }
+    if (end_out) *end_out = close;
+    return 1;
+}
+
 static void add_property_assignment_nodes_in_range(Parser *p, int64_t parent, size_t a, size_t b);
 
 static int parse_function_like(Parser *p, size_t a, size_t b, int64_t parent, const char *class_name, size_t open_paren, int64_t *out_fn) {
@@ -1368,23 +1419,38 @@ static int parse_function_like(Parser *p, size_t a, size_t b, int64_t parent, co
     qual = scope_qualified(p, name);
     {
         size_t function_last = b;
+        size_t body_open = SIZE_MAX;
         fn = ir_add_node(p->ir, kind, a, b, parent);
         node_set_name(p->ir, fn, name);
         node_set_qualified(p->ir, fn, qual);
         if (kind == N_OPERATOR_FUNCTION) node_set_resolved(p->ir, fn, qual);
         if (name_i > a) node_set_return(p->ir, fn, token_range_text(p, a, name_i - 1));
         parse_parameters(p, fn, open_paren + 1, close_paren - 1);
-        if (close_paren + 1 <= b && str_eq(pt(p, close_paren + 1), "{")) {
-            size_t close = find_matching(p, close_paren + 1, b + 1);
+
+        /* CXXE accepts both `f(...) {}` and C++ trailing-return syntax
+           `auto f(...) -> T {}`.  Locate the body in the latter form too,
+           otherwise CXXE-only constructs inside the function (e.g. match)
+           would remain in the emitted C++ unchanged. */
+        if (close_paren + 1 <= b) {
+            if (str_eq(pt(p, close_paren + 1), "{")) {
+                body_open = close_paren + 1;
+            } else if (str_eq(pt(p, close_paren + 1), "->")) {
+                size_t j = close_paren + 2;
+                while (j <= b && !str_eq(pt(p, j), "{") && !str_eq(pt(p, j), ";")) j++;
+                if (j <= b && str_eq(pt(p, j), "{")) body_open = j;
+            }
+        }
+        if (body_open != SIZE_MAX) {
+            size_t close = find_matching(p, body_open, b + 1);
             if (close <= b) {
                 function_last = close;
                 p->ir->nodes[fn].last_tok = close;
-                if (close_paren + 2 <= close - 1) {
+                if (body_open + 1 <= close - 1) {
                     /* Insert property assignment nodes before the generic expression
                        nodes so emission order follows source order when reads and
                        writes overlap the same statement range. */
-                    add_property_assignment_nodes_in_range(p, fn, close_paren + 2, close - 1);
-                    add_expr_nodes(p, fn, close_paren + 2, close - 1);
+                    add_property_assignment_nodes_in_range(p, fn, body_open + 1, close - 1);
+                    add_expr_nodes(p, fn, body_open + 1, close - 1);
                 }
             }
         }
@@ -1825,7 +1891,7 @@ static int looks_like_var_decl(Parser *p, size_t a, size_t b) {
             if (i > a && is_identifier(p, i) && (str_eq(pt(p, i - 1), "*") || str_eq(pt(p, i - 1), "&") || is_keyword(pt(p, i - 1)))) return 1;
         }
     }
-    if (is_keyword(pt(p, a))) return 1;
+    if (is_keyword(pt(p, a)) || str_eq(pt(p, a), "dynamic")) return 1;
     return 0;
 }
 
@@ -1981,6 +2047,13 @@ static void parse_region_items(Parser *p, size_t a, size_t b, int64_t parent, in
             continue;
         }
 
+        if (str_eq(pt(p, i), "@") && i + 1 <= b && str_eq(pt(p, i + 1), "conversion")) {
+            size_t conversion_end = SIZE_MAX;
+            if (!parse_conversion_decl(p, i, b, parent, &conversion_end)) die("CXXE: invalid @conversion declaration");
+            i = conversion_end + 1;
+            continue;
+        }
+
         if (str_eq(pt(p, i), "@")) {
             parse_decorator_sequence(p, &i, b, parent);
             continue;
@@ -2124,10 +2197,19 @@ static void parse_region_items(Parser *p, size_t a, size_t b, int64_t parent, in
                 if (after <= e && (str_eq(pt(p, after), "{") || str_eq(pt(p, after), ";") || str_eq(pt(p, after), "const") || str_eq(pt(p, after), "noexcept") || str_eq(pt(p, after), "->") || str_eq(pt(p, after), "override") || str_eq(pt(p, after), "final"))) functionish = 1;
                 if (functionish) {
                     int64_t fn_id = -1;
-                    if (parse_function_like(p, i, e, parent, class_name, open, &fn_id)) {
+                    size_t function_end = e;
+                    /* find_stmt_end() deliberately stops at the first top-level
+                       semicolon, which is not enough for a function body.  Extend
+                       the parser range to the matching closing brace so CXXE-only
+                       statements (such as match) inside the function are seen. */
+                    if (after <= e && str_eq(pt(p, after), "{")) {
+                        size_t body_close = find_matching(p, after, b + 1);
+                        if (body_close <= b) function_end = body_close;
+                    }
+                    if (parse_function_like(p, i, function_end, parent, class_name, open, &fn_id)) {
                         if (fn_id >= 0) parser_apply_pending(p, fn_id);
                         if (fn_id >= 0) i = (size_t)p->ir->nodes[fn_id].last_tok + 1;
-                        else i = e + 1;
+                        else i = function_end + 1;
                         continue;
                     }
                 }
@@ -3006,7 +3088,9 @@ static int class_has_runtime_features(const IR *ir) {
         if (n->kind == N_GET_MEMBER && (n->flags & NF_GET_MEMBER_RUNTIME)) return 1;
         if (n->kind == N_FUNC_CALL && n->qualified &&
             (strcmp(n->qualified, "stde::factory_new") == 0 || strcmp(n->qualified, "stde::factory_find") == 0)) return 1;
+        if (n->kind == N_CONVERSION_FUNCTION || n->kind == N_MATCH_STMT) return 1;
     }
+    for (i = 0; i < ir->tokens.n; ++i) if (strcmp(ir->tokens.v[i].text, "dynamic") == 0) return 1;
     return 0;
 }
 
@@ -3179,6 +3263,8 @@ static void emit_registered_enum(const IR *ir, const IRNode *en, size_t index, S
     }
 }
 
+static void emit_source_range_with_properties(const IR *ir, Str *out, uint64_t begin, uint64_t end);
+
 static void emit_registered_classes(const IR *ir, Str *out) {
     size_t i;
     int any = 0;
@@ -3207,6 +3293,23 @@ static void emit_registered_classes(const IR *ir, Str *out) {
             else if (m->kind == N_METHOD) emit_registered_member_method(ir, cls, m, out);
             else die("CXXE: unsupported @exposed member kind");
             str_put(out, ";\n");
+        }
+    }
+    for (i = 0; i < ir->node_count; ++i) {
+        const IRNode *conv = &ir->nodes[i];
+        if (conv->kind == N_CONVERSION_FUNCTION) {
+            size_t brace = conv->aux < ir->tokens.n ? (size_t)conv->aux : SIZE_MAX;
+            if (!conv->type || !*conv->type || !conv->return_type || !*conv->return_type || brace == SIZE_MAX || brace + 1 >= (size_t)conv->last_tok)
+                die("CXXE: malformed @conversion");
+            str_put(out, "        stde::register_conversion<");
+            str_put(out, conv->type); str_put(out, ", "); str_put(out, conv->return_type);
+            str_put(out, ">([](const "); str_put(out, conv->type); str_put(out, "& value) -> "); str_put(out, conv->return_type); str_put(out, " {");
+            if (brace + 1 <= (size_t)conv->last_tok - 1) {
+                uint64_t bs = ir->tokens.v[brace + 1].byte_start;
+                uint64_t be = ir->tokens.v[(size_t)conv->last_tok - 1].byte_end;
+                emit_source_range_with_properties(ir, out, bs, be);
+            }
+            str_put(out, " });\n");
         }
     }
     str_put(out, "        return true;\n    }();\n    (void)initialized;\n}\n}\n");
@@ -3371,6 +3474,10 @@ static void emit_tokens_range(const IR *ir, Str *out, size_t a, size_t b, const 
             str_put(out, replace_name);
             continue;
         }
+        if (strcmp(text, "dynamic") == 0) {
+            str_put(out, "stde::DynamicValue");
+            continue;
+        }
         if ((strcmp(text, ".") == 0 || strcmp(text, "->") == 0) &&
             i > a && i + 1 <= b && i + 1 < ir->tokens.n &&
             ir->tokens.v[i + 1].kind == TK_IDENTIFIER && property_read_context(ir, i, b)) {
@@ -3404,6 +3511,11 @@ static void emit_source_range_with_properties(const IR *ir, Str *out, uint64_t b
         if (t->byte_start > pos) {
             uint64_t gap_end = t->byte_start < end ? t->byte_start : end;
             if (gap_end > pos) str_putn(out, (const char *)ir->source + pos, (size_t)(gap_end - pos));
+        }
+        if (strcmp(t->text, "dynamic") == 0) {
+            str_put(out, "stde::DynamicValue");
+            if (t->byte_end > pos) pos = t->byte_end;
+            continue;
         }
         if ((strcmp(t->text, ".") == 0 || strcmp(t->text, "->") == 0) &&
             i + 1 < ir->tokens.n && ir->tokens.v[i + 1].kind == TK_IDENTIFIER &&
@@ -3898,6 +4010,60 @@ static void emit_function_with_custom_decorators(const IR *ir, const IRNode *fn,
     }
 }
 
+static int match_pattern_is_type(const IR *ir, size_t a, size_t b) {
+    size_t i;
+    if (a > b || b >= ir->tokens.n) return 0;
+    if (!strcmp(ir->tokens.v[a].text, "default") || !strcmp(ir->tokens.v[a].text, "_")) return 1;
+    for (i = a; i <= b; ++i) {
+        const char *t = ir->tokens.v[i].text;
+        if (isalpha((unsigned char)t[0]) || t[0] == '_' || !strcmp(t, "::") || !strcmp(t, "<") ||
+            !strcmp(t, ">") || !strcmp(t, ",") || !strcmp(t, "*") || !strcmp(t, "&") || !strcmp(t, "&&")) continue;
+        return 0;
+    }
+    return 1;
+}
+
+static void emit_match_statement(const IR *ir, const IRNode *node, Str *out) {
+    size_t a=(size_t)node->first_tok, b=(size_t)node->last_tok, brace=(node->aux<ir->tokens.n?(size_t)node->aux:SIZE_MAX), close=b;
+    size_t subject_a=a+1, subject_b, i, labels=0, label_start[128], label_colon[128];
+    size_t candidate;
+    int par=0, br=0, cur=0, angle=0;
+    const char *subject_name;
+    if (brace==SIZE_MAX || brace<=a+1 || brace>=close) die("CXXE: invalid match statement");
+    subject_b=brace-1;
+    if (subject_a!=subject_b || ir->tokens.v[subject_a].kind!=TK_IDENTIFIER) die("CXXE: match currently requires a simple variable as its value");
+    subject_name=ir->tokens.v[subject_a].text;
+    candidate=brace+1;
+    for (i=brace+1;i<close;++i) {
+        const char *t=ir->tokens.v[i].text;
+        if (!strcmp(t,"(")) par++;
+        else if (!strcmp(t,")")&&par) par--;
+        else if (!strcmp(t,"[")) br++;
+        else if (!strcmp(t,"]")&&br) br--;
+        else if (!strcmp(t,"{")) cur++;
+        else if (!strcmp(t,"}")) { if (cur) { cur--; if (!cur) candidate=i+1; } }
+        else if (!strcmp(t,"<")) angle++;
+        else if (!strcmp(t,">")&&angle) angle--;
+        else if (!strcmp(t,";")&&!par&&!br&&!cur&&!angle) candidate=i+1;
+        else if (!strcmp(t,":")&&!par&&!br&&!cur&&!angle&&candidate<i&&match_pattern_is_type(ir,candidate,i-1)) {
+            if (labels>=128) die("CXXE: too many match cases");
+            label_start[labels]=candidate; label_colon[labels]=i; labels++; candidate=i+1;
+        }
+    }
+    if (!labels) die("CXXE: match must contain at least one case");
+    str_put(out,"{ auto&& __cxxe_match_value = ("); append_token_bytes(ir,out,subject_a,subject_b); str_put(out,");\n");
+    for (i=0;i<labels;++i) {
+        size_t body_a=label_colon[i]+1, body_b=(i+1<labels?label_start[i+1]-1:close-1);
+        int is_default=!strcmp(ir->tokens.v[label_start[i]].text,"default")||!strcmp(ir->tokens.v[label_start[i]].text,"_");
+        if (i==0) str_put(out,is_default?"    if (true) {\n":"    if (__cxxe_match_value.is<");
+        else str_put(out,is_default?"    else {\n":"    else if (__cxxe_match_value.is<");
+        if (!is_default) { append_token_bytes(ir,out,label_start[i],label_colon[i]-1); str_put(out,">()) {\n        auto&& "); str_put(out,subject_name); str_put(out," = __cxxe_match_value.as<"); append_token_bytes(ir,out,label_start[i],label_colon[i]-1); str_put(out,">();\n"); }
+        if (body_a<=body_b) { uint64_t bs=ir->tokens.v[body_a].byte_start, be=ir->tokens.v[body_b].byte_end; emit_source_range_with_properties(ir,out,bs,be); str_ch(out,'\n'); }
+        str_put(out,"    }\n");
+    }
+    str_put(out,"}\n");
+}
+
 static int node_needs_native_emit(const IR *ir, const IRNode *n) {
     if (n->kind == N_DECORATOR) return 1;
     if (n->kind == N_CUSTOM_DECORATOR) return 1;
@@ -3908,6 +4074,7 @@ static int node_needs_native_emit(const IR *ir, const IRNode *n) {
     if (n->kind == N_GET_MEMBER) return 1;
     if (n->kind == N_FUNC_CALL && node_is_factory_runtime_call(n)) return 1;
     if (n->kind == N_FUNC_CALL && node_is_named_call(ir, (int64_t)(n - ir->nodes))) return 1;
+    if (n->kind == N_MATCH_STMT || n->kind == N_CONVERSION_FUNCTION) return 1;
     return 0;
 }
 
@@ -3944,7 +4111,8 @@ static void emit_cpp(const IR *ir, const char *path) {
             if (bs < cursor) continue;
             if (bs > ir->source_size || be > ir->source_size || be < bs) continue;
             emit_source_range_with_properties(ir, &out, cursor, bs);
-            if (n->kind == N_DECORATOR || n->kind == N_CUSTOM_DECORATOR) { /* CXXE-only decorator syntax. */ }
+            if (n->kind == N_DECORATOR || n->kind == N_CUSTOM_DECORATOR || n->kind == N_CONVERSION_FUNCTION) { /* CXXE-only syntax. */ }
+            else if (n->kind == N_MATCH_STMT) { emit_match_statement(ir, n, &out); }
             else if (n->kind == N_PROPERTY) { emit_property(ir, n, &out); }
             else if ((n->kind == N_FUNCTION || n->kind == N_METHOD) && function_has_custom_decorator(ir, n)) {
                 emit_function_with_custom_decorators(ir, n, &out);
@@ -4144,6 +4312,7 @@ static const char CXXE_RUNTIME_HPP[] =
 "#define CXXE_RUNTIME_HPP\n"
 "\n"
 "#include <any>\n"
+"#include <functional>\n"
 "#include <memory>\n"
 "#include <mutex>\n"
 "#include <stdexcept>\n"
@@ -4153,27 +4322,71 @@ static const char CXXE_RUNTIME_HPP[] =
 "#include <typeindex>\n"
 "#include <utility>\n"
 "#include <vector>\n"
-"\n"
 "namespace stde {\n"
+"\n"
+"class ConversionRegistry {\n"
+"    struct Entry {\n"
+"        std::type_index from = typeid(void);\n"
+"        std::type_index to = typeid(void);\n"
+"        std::function<std::any(const std::any&)> convert;\n"
+"    };\n"
+"    mutable std::mutex mutex_;\n"
+"    std::vector<Entry> entries_;\n"
+"    ConversionRegistry() = default;\n"
+"public:\n"
+"    ConversionRegistry(const ConversionRegistry&) = delete;\n"
+"    ConversionRegistry& operator=(const ConversionRegistry&) = delete;\n"
+"    static ConversionRegistry& instance() { static ConversionRegistry r; return r; }\n"
+"\n"
+"    template <class From, class To, class F>\n"
+"    void register_conversion(F&& fn) {\n"
+"        std::lock_guard<std::mutex> lock(mutex_);\n"
+"        const auto from = std::type_index(typeid(From));\n"
+"        const auto to = std::type_index(typeid(To));\n"
+"        for (auto& e : entries_) if (e.from == from && e.to == to) {\n"
+"            e.convert = [fn = std::forward<F>(fn)](const std::any& v) { return std::any(fn(std::any_cast<const From&>(v))); };\n"
+"            return;\n"
+"        }\n"
+"        Entry e; e.from = from; e.to = to;\n"
+"        e.convert = [fn = std::forward<F>(fn)](const std::any& v) { return std::any(fn(std::any_cast<const From&>(v))); };\n"
+"        entries_.push_back(std::move(e));\n"
+"    }\n"
+"\n"
+"    std::any convert(const std::any& value, std::type_index to) const {\n"
+"        std::lock_guard<std::mutex> lock(mutex_);\n"
+"        const auto from = std::type_index(value.type());\n"
+"        for (const auto& e : entries_) if (e.from == from && e.to == to) return e.convert(value);\n"
+"        return std::any();\n"
+"    }\n"
+"};\n"
+"\n"
+"template <class From, class To, class F>\n"
+"void register_conversion(F&& fn) { ConversionRegistry::instance().template register_conversion<From, To>(std::forward<F>(fn)); }\n"
 "\n"
 "class DynamicValue {\n"
 "    std::any value_;\n"
 "public:\n"
 "    DynamicValue() = default;\n"
 "    explicit DynamicValue(std::any value) : value_(std::move(value)) {}\n"
+"    template <class T, std::enable_if_t<!std::is_same_v<std::decay_t<T>, DynamicValue>, int> = 0>\n"
+"    DynamicValue(T&& value) : value_(std::forward<T>(value)) {}\n"
 "\n"
-"    template <class T>\n"
-"    static DynamicValue from(T&& value) {\n"
-"        return DynamicValue(std::any(std::forward<T>(value)));\n"
-"    }\n"
-"\n"
+"    template <class T> static DynamicValue from(T&& value) { return DynamicValue(std::forward<T>(value)); }\n"
 "    bool has_value() const noexcept { return value_.has_value(); }\n"
 "\n"
-"    template <class T>\n"
-"    T get() const { return std::any_cast<T>(value_); }\n"
-"\n"
-"    template <class T>\n"
-"    operator T() const { return std::any_cast<T>(value_); }\n"
+"    template <class T> bool is() const noexcept { return value_.has_value() && value_.type() == typeid(T); }\n"
+"    template <class T> T& as() { if (!is<T>()) throw std::bad_any_cast(); return std::any_cast<T&>(value_); }\n"
+"    template <class T> const T& as() const { if (!is<T>()) throw std::bad_any_cast(); return std::any_cast<const T&>(value_); }\n"
+"    template <class T> T get_as() const {\n"
+"        if (is<T>()) return std::any_cast<T>(value_);\n"
+"        std::any converted = ConversionRegistry::instance().convert(value_, std::type_index(typeid(T)));\n"
+"        if (!converted.has_value()) throw std::bad_any_cast();\n"
+"        return std::any_cast<T>(converted);\n"
+"    }\n"
+"    template <class T> T get() const { return get_as<T>(); }\n"
+"    template <class T, std::enable_if_t<!std::is_same_v<std::decay_t<T>, DynamicValue>, int> = 0>\n"
+"    DynamicValue& operator=(T&& value) { value_ = std::forward<T>(value); return *this; }\n"
+"    template <class T> operator T() const { return get_as<T>(); }\n"
 "};\n"
 "\n"
 "namespace detail {\n"

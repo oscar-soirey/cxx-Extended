@@ -1,0 +1,19 @@
+#include <iostream>
+
+
+int main(int argc, char** argv)
+{
+	dynamic value = 42;
+
+	printf("%d\n", value.as<int>());
+
+	value = 3.14f;
+
+	printf("%f\n", value.as<float>());
+
+	value = std::string("hello");
+
+	printf("%s\n", value.as<std::string>().c_str());
+	
+	return 0;
+}

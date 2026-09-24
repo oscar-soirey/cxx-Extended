@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>C++Extended (cxxe)</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, sans-serif; line-height: 1.6; color: #222; background: #fff; }
+  aside { position: fixed; top: 0; left: 0; bottom: 0; width: 240px; background: #222; color: #ddd; padding: 24px 20px; overflow-y: auto; }
+  aside img { display: block; width: 90px; margin-bottom: 12px; }
+  aside .name { color: #fff; font-weight: bold; font-size: 18px; margin-bottom: 20px; }
+  aside a { display: block; color: #ddd; text-decoration: none; padding: 4px 0; font-size: 15px; }
+  aside a:hover, aside a:focus-visible { color: #fff; text-decoration: underline; }
+  main { margin-left: 240px; padding: 40px 48px; max-width: 900px; }
+  h1 { margin-top: 0; }
+  h2 { margin-top: 48px; padding-top: 8px; border-top: 1px solid #ccc; }
+  code { background: #eee; padding: 1px 5px; font-family: ui-monospace, Consolas, monospace; font-size: 0.92em; }
+  pre { background: #f3f3f3; border: 1px solid #ddd; padding: 14px; overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; }
+  th, td { border: 1px solid #ccc; padding: 6px 10px; text-align: left; }
+  th { background: #eee; }
+  .note { border-left: 4px solid #222; background: #f3f3f3; padding: 8px 14px; margin: 16px 0; }
+  @media (max-width: 760px) {
+    aside { position: static; width: auto; }
+    main { margin-left: 0; padding: 24px 20px; }
+  }
+</style>
+</head>
+<body>
+
+<aside>
+  <img src="assets/icon-transparent_white_line.png" alt="Logo C++Extended">
+  <div class="name">C++Extended</div>
+  <nav>
+    <a href="#introduction">Introduction</a>
+    <a href="#statut">Statut des fonctionnalités</a>
+    <a href="#compatibilite">Compatibilité C++</a>
+    <a href="#parametres">Paramètres nommés</a>
+    <a href="#decorateurs">Décorateurs natifs</a>
+    <a href="#custom">Décorateurs custom</a>
+    <a href="#cycle-de-vie">Décorateurs de cycle de vie</a>
+    <a href="#signals">Signals</a>
+    <a href="#defer">defer</a>
+    <a href="#enums">Enums introspectables</a>
+    <a href="#properties">Properties</a>
+    <a href="#ioutput">Redirection (IOutput)</a>
+    <a href="#cmake">Toolchain CMake</a>
+    <a href="#concepts">Concepts</a>
+    <a href="#notes">Notes et limites</a>
+  </nav>
+</aside>
+
+<main>
+  <h1 id="introduction">C++Extended (cxxe)</h1>
+  <p>Le C++ est puissant, mais il traîne des décennies de cérémonie : de la plomberie pour observer une variable, du boilerplate pour les getters, des macros fragiles pour convertir un <code>enum</code> en chaîne, des destructeurs détournés pour imiter <code>finally</code>.</p>
+  <p><strong>C++Extended</strong> (compilateur : <code>cxxe</code>) est un sur-ensemble du C++ qui garde <strong>100 % des fonctionnalités du C++</strong> et ajoute une couche d'ergonomie moderne : décorateurs, signals, <code>defer</code>, properties natives, réflexion à l'exécution, etc. Le principe est simple : <code>cxxe</code> transforme votre code étendu en C++ standard, sans rien retirer au langage d'origine.</p>
+  <p>Il n'y a pas de nouveau langage à apprendre. Vous étendez celui que vous connaissez déjà.</p>
+
+  <h2 id="statut">Statut des fonctionnalités</h2>
+  <table>
+    <tr><th>Fonctionnalité</th><th>Statut</th></tr>
+    <tr><td>Toutes les fonctionnalités du C++</td><td>Disponible</td></tr>
+    <tr><td>Paramètres nommés</td><td>Disponible</td></tr>
+    <tr><td>Décorateurs natifs (<code>@register</code>, <code>@exposed</code>, …)</td><td>Disponible</td></tr>
+    <tr><td>Décorateurs custom</td><td>Disponible</td></tr>
+    <tr><td><code>@deprecated</code>, <code>@since</code>, <code>@experimental</code></td><td>Disponible</td></tr>
+    <tr><td>Signals (<code>signal:</code>)</td><td>Disponible</td></tr>
+    <tr><td><code>defer</code></td><td>Disponible</td></tr>
+    <tr><td>Enums introspectables</td><td>Disponible</td></tr>
+    <tr><td>Properties (<code>property</code>)</td><td>Disponible</td></tr>
+    <tr><td>Redirection des sorties (<code>IOutput</code>)</td><td>Disponible</td></tr>
+    <tr><td>Toolchain CMake</td><td>Disponible</td></tr>
+    <tr><td>Templates sur les décorateurs</td><td>Prévu</td></tr>
+    <tr><td>Type <code>dynamic</code></td><td>Concept</td></tr>
+    <tr><td>Pattern matching (<code>match</code>)</td><td>Concept</td></tr>
+    <tr><td>JSON / XML / autres formats</td><td>Concept</td></tr>
+    <tr><td>Sérialisation automatique (<code>@serializable</code>)</td><td>Concept</td></tr>
+  </table>
+
+  <h2 id="compatibilite">Compatibilité C++</h2>
+  <p>C++Extended est un <strong>sur-ensemble</strong> du C++ : tout code C++ valide est un code C++Extended valide. Un projet existant peut donc être migré fichier par fichier.</p>
+
+  <h2 id="parametres">Paramètres nommés</h2>
+  <p>Les arguments peuvent être passés par nom, dans n'importe quel ordre.</p>
+<pre><code>int add(int a, int b);
+
+int main() {
+    int r = add(b=5, a=4);
+}</code></pre>
+
+  <h2 id="decorateurs">Décorateurs natifs et réflexion</h2>
+  <p>Les décorateurs natifs permettent d'enregistrer des classes et d'exposer des membres pour y accéder <strong>à l'exécution</strong> par leur nom.</p>
+  <table>
+    <tr><th>Décorateur</th><th>Rôle</th></tr>
+    <tr><td><code>@register</code></td><td>Enregistre la classe dans la factory.</td></tr>
+    <tr><td><code>@exposed</code></td><td>Expose un membre à la réflexion. Il doit être <code>public</code>.</td></tr>
+  </table>
+<pre><code>@register
+class A {
+public:
+    @exposed int health;
+};</code></pre>
+
+  <h3>Créer des instances</h3>
+<pre><code>// Instancier par nom
+A* obj = stde::factory_new("A");
+// transformé par cxxe en : new A()
+
+// Récupérer le type par nom
+A* obj2 = new stde::factory_find("A")();
+// transformé par cxxe en : new A()</code></pre>
+
+  <h3>Accéder aux membres exposés</h3>
+<pre><code>obj->get_member("health") = 4;
+// transformé par cxxe en : obj->health = 4;</code></pre>
+
+  <h3>Usage dynamique</h3>
+  <p>Tout est résolu <strong>à l'exécution</strong> : le nom peut venir d'une source inconnue à la compilation.</p>
+<pre><code>stde::factory_new(unknown_string);</code></pre>
+  <div class="note">Un membre <code>@exposed</code> doit obligatoirement être <code>public</code>.</div>
+
+  <h2 id="custom">Décorateurs custom</h2>
+  <p>Vous pouvez déclarer vos propres décorateurs. Un décorateur reçoit la fonction décorée (<code>func</code>) et l'enveloppe comme vous le souhaitez.</p>
+<pre><code>void @my_decorator() -> func(int a) {
+    before();
+    func(a);
+    after();
+}</code></pre>
+  <p>Un décorateur peut aussi prendre des <strong>paramètres</strong> :</p>
+<pre><code>void @my_decorator(/* paramètres du décorateur */) -> func(int a) {
+    before();
+    func(a);
+    after();
+}</code></pre>
+  <p>Utilisation :</p>
+<pre><code>@my_decorator
+void work(int a) { /* ... */ }</code></pre>
+  <div class="note">Le support des <strong>templates</strong> sur les décorateurs est prévu pour une prochaine version.</div>
+
+  <h2 id="cycle-de-vie">Décorateurs de cycle de vie</h2>
+  <p>Trois décorateurs standards documentent l'évolution de votre API.</p>
+  <table>
+    <tr><th>Décorateur</th><th>Description</th></tr>
+    <tr><td><code>@deprecated(msg)</code></td><td>Marque un élément comme obsolète, avec un message.</td></tr>
+    <tr><td><code>@since(version)</code></td><td>Indique la version où l'élément a été introduit.</td></tr>
+    <tr><td><code>@experimental(msg)</code></td><td>Signale une API instable, susceptible de changer.</td></tr>
+  </table>
+<pre><code>@since("1.2")
+@deprecated("Use load_v2() instead")
+void load();
+
+@experimental("The interface may change")
+void new_feature();</code></pre>
+
+  <h2 id="signals">Signals</h2>
+  <p>Un <code>signal</code> détecte les modifications d'une variable et exécute un bloc de code à chaque changement. Il fonctionne partout : portée globale, classes, structures, etc.</p>
+<pre><code>int my_int = 0;
+
+signal: my_int {
+    var_changed();
+}</code></pre>
+  <p>Dans une classe :</p>
+<pre><code>class Player {
+public:
+    int score = 0;
+
+    signal: score {
+        update_ui();
+    }
+};</code></pre>
+
+  <h2 id="defer">defer</h2>
+  <p><code>defer</code> exécute un bloc à la <strong>sortie de la portée courante</strong>, quel que soit le chemin de sortie.</p>
+<pre><code>void process() {
+    FILE* f = fopen("data.txt", "r");
+    defer { fclose(f); }
+
+    // ... utiliser f ...
+}   // fclose(f) est appelé ici</code></pre>
+
+  <h2 id="enums">Enums introspectables</h2>
+  <p>Les enums sont introspectables : conversion <code>enum → string</code>, conversion <code>string → enum</code> et autres opérations de réflexion.</p>
+<pre><code>enum class Color { Red, Green, Blue };</code></pre>
+  <p>Les fonctions d'introspection couvrent notamment :</p>
+  <ul>
+    <li>la conversion <code>enum → string</code> ;</li>
+    <li>la conversion <code>string → enum</code> ;</li>
+    <li>d'autres utilitaires de réflexion sur les valeurs de l'enum.</li>
+  </ul>
+
+  <h2 id="properties">Properties (getters/setters natifs)</h2>
+  <p>Les classes et structures supportent nativement les properties avec <code>get</code> et <code>set</code>, sans boilerplate.</p>
+<pre><code>class Character {
+    int health;
+
+public:
+    property Health {
+        get { return health; }
+        set { health = clamp(value, 0, 100); }
+    }
+};</code></pre>
+  <p>Utilisation :</p>
+<pre><code>Character c;
+c.Health = 150;    // appelle le setter : health = 100
+int h = c.Health;  // appelle le getter</code></pre>
+
+  <h2 id="ioutput">Redirection des sorties (IOutput)</h2>
+  <p>Toutes les sorties peuvent être redirigées nativement, quel que soit le mécanisme utilisé dans le code :</p>
+  <ul>
+    <li><code>std::cout</code></li>
+    <li><code>printf</code></li>
+    <li><code>std::print</code></li>
+    <li>et d'autres sorties standards</li>
+  </ul>
+  <p>La redirection repose sur l'interface <code>IOutput</code> : implémentez-la pour envoyer les sorties vers un fichier, une console d'éditeur, le réseau, un log, etc.</p>
+
+  <h2 id="cmake">Toolchain CMake</h2>
+  <p>C++Extended s'intègre à <strong>CMake</strong> via une toolchain dédiée. Les sources étendues sont traitées par <code>cxxe</code> avant la compilation C++ habituelle : le langage peut donc être adopté dans un projet existant sans changer le système de build.</p>
+
+  <h2 id="concepts">Concepts (feuille de route)</h2>
+  <div class="note">Ces éléments sont des <strong>concepts</strong> à l'étude. Leur syntaxe et leur comportement ne sont pas définitifs, et ils ne sont pas encore implémentés.</div>
+
+  <h3>Type dynamic</h3>
+  <p>Un type dont le type réel n'est connu qu'à l'<strong>exécution</strong>, comme en Python. Il permet par exemple de stocker des valeurs de types différents dans un seul conteneur.</p>
+<pre><code>std::vector&lt;dynamic&gt; items = { 42, "hello", 3.14 };</code></pre>
+
+  <h3>Pattern matching</h3>
+  <p>Une instruction <code>match</code> traite une valeur selon son type. Dans chaque branche, la valeur est déjà convertie vers le type correspondant.</p>
+<pre><code>match value {
+    int: printf("%d\n", value);  // value est déjà un int ici
+}</code></pre>
+
+  <h3>JSON, XML et autres formats de données</h3>
+  <p>Des contrôles natifs pour manipuler les formats de données courants (JSON, XML, etc.) directement depuis le langage.</p>
+
+  <h3>Sérialisation automatique</h3>
+  <p>Le décorateur <code>@serializable</code> générera automatiquement la sérialisation et la désérialisation d'une classe.</p>
+<pre><code>@serializable
+class Config {
+public:
+    int width;
+    int height;
+};</code></pre>
+
+  <h2 id="notes">Notes et limites</h2>
+  <ul>
+    <li>Les exemples de cette documentation illustrent la syntaxe ; les noms exacts des fonctions de la bibliothèque <code>stde</code> peuvent varier selon les versions.</li>
+    <li>Un membre <code>@exposed</code> doit être <code>public</code>.</li>
+    <li>Les fonctionnalités marquées « Concept » ne sont pas encore implémentées.</li>
+  </ul>
+</main>
+
+</body>
+</html>
