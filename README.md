@@ -1,758 +1,301 @@
-<p align="center">
-
-&#x20; <img src="./assets/icon-transparent\_white\_line.png" alt="Logo C++Extended" width="160">
-
-</p>
-
-
-
-<h1 align="center">C++Extended (cxxe)</h1>
-
-
-
-<p align="center">
-
-&#x20; <em>Tout le C++ que vous aimez. Et tout ce qu'il vous manquait.</em>
-
-</p>
-
-
-
-\---
-
-
-
-\## Introduction
-
-
-
-Le C++ est puissant, mais il traîne des décennies de cérémonial : écrire de la
-
-plomberie pour observer une variable, du boilerplate pour un getter, des
-
-macros fragiles pour convertir un `enum` en chaîne, des `try/finally`
-
-simulés à la main avec des destructeurs.
-
-
-
-\*\*C++Extended\*\* (compilateur `cxxe`) est un sur-ensemble du C++ qui garde
-
-\*\*100 % des fonctionnalités du C++\*\* et y ajoute une couche moderne
-
-d'ergonomie : décorateurs, signaux, `defer`, propriétés natives, réflexion
-
-à l'exécution et bien plus. Le principe est simple : `cxxe` transforme votre
-
-code étendu en C++ standard, sans surcoût caché et sans rien retirer au
-
-langage d'origine.
-
-
-
-> Vous n'apprenez pas un nouveau langage. Vous débloquez celui que vous
-
-> connaissez déjà.
-
-
-
-\---
-
-
-
-\## Sommaire
-
-
-
-1\. \[Statut des fonctionnalités](#statut-des-fonctionnalités)
-
-2\. \[Compatibilité C++](#compatibilité-c)
-
-3\. \[Paramètres nommés](#paramètres-nommés)
-
-4\. \[Décorateurs natifs et réflexion](#décorateurs-natifs-et-réflexion)
-
-5\. \[Décorateurs personnalisés](#décorateurs-personnalisés)
-
-6\. \[Décorateurs de cycle de vie](#décorateurs-de-cycle-de-vie)
-
-7\. \[Signaux](#signaux)
-
-8\. \[`defer`](#defer)
-
-9\. \[Enums introspectables](#enums-introspectables)
-
-10\. \[Propriétés (getter/setter natifs)](#propriétés-gettersetter-natifs)
-
-11\. \[Redirection des sorties (`IOutput`)](#redirection-des-sorties-ioutput)
-
-12\. \[Toolchain CMake](#toolchain-cmake)
-
-13\. \[Concepts (roadmap)](#concepts-roadmap)
-
-14\. \[Notes et limitations](#notes-et-limitations)
-
-
-
-\---
-
-
-
-\## Statut des fonctionnalités
-
-
-
-| Fonctionnalité                                   | Statut          |
-
-|--------------------------------------------------|-----------------|
-
-| Toutes les fonctionnalités du C++                | ✅ Disponible   |
-
-| Paramètres nommés                                | ✅ Disponible   |
-
-| Décorateurs natifs (`@register`, `@exposed`, …)  | ✅ Disponible   |
-
-| Décorateurs personnalisés                        | ✅ Disponible   |
-
-| `@deprecated`, `@since`, `@experimental`         | ✅ Disponible   |
-
-| Signaux (`signal:`)                              | ✅ Disponible   |
-
-| `defer`                                          | ✅ Disponible   |
-
-| Enums introspectables                            | ✅ Disponible   |
-
-| Propriétés (`property`)                          | ✅ Disponible   |
-
-| Redirection des sorties (`IOutput`)              | ✅ Disponible   |
-
-| Toolchain CMake                                  | ✅ Disponible   |
-
-| Templates sur les décorateurs                    | 🛠 Prévu        |
-
-| Type `dynamic`                                   | 💡 Concept      |
-
-| Pattern matching (`match`)                       | 💡 Concept      |
-
-| JSON / XML / autres formats (contrôles natifs)   | 💡 Concept      |
-
-| Sérialisation automatique (`@serializable`)      | 💡 Concept      |
-
-
-
-\---
-
-
-
-\## Compatibilité C++
-
-
-
-C++Extended est un \*\*sur-ensemble\*\* du C++ : tout code C++ valide est un code
-
-C++Extended valide. Vous pouvez migrer un projet existant fichier par fichier.
-
-
-
-\---
-
-
-
-\## Paramètres nommés
-
-
-
-Les arguments peuvent être passés par nom, dans n'importe quel ordre.
-
-
+!\[C++Extended logo](./assets/icon.png)
+
+# C++Extended (cxxe)
+
+## Introduction
+
+C++ is powerful, but it carries decades of ceremony: plumbing to observe a variable, boilerplate for getters, fragile macros to convert an `enum` to a string, destructors repurposed to emulate `finally`.
+
+**C++Extended** (compiler: `cxxe`) is a superset of C++ that keeps **100% of C++ features** and adds a modern layer of ergonomics on top: decorators, signals, `defer`, native properties, runtime reflection and more. The principle is simple: `cxxe` transforms your extended code into standard C++, without removing anything from the original language.
+
+There is no new language to learn. You extend the one you already know.
+
+## Table of contents
+
+* [Feature status](#feature-status)
+* [C++ compatibility](#c-compatibility)
+* [Named parameters](#named-parameters)
+* [Native decorators and reflection](#native-decorators-and-reflection)
+* [Custom decorators](#custom-decorators)
+* [Lifecycle decorators](#lifecycle-decorators)
+* [Signals](#signals)
+* [defer](#defer)
+* [Introspectable enums](#introspectable-enums)
+* [Properties (native getters/setters)](#properties-native-getterssetters)
+* [Output redirection (IOutput)](#output-redirection-ioutput)
+* [CMake toolchain](#cmake-toolchain)
+* [Concepts (roadmap)](#concepts-roadmap)
+* [Notes and limitations](#notes-and-limitations)
+
+## Feature status
+
+|Feature|Status|
+|-|-|
+|All C++ features|✅ Available|
+|Named parameters|✅ Available|
+|Native decorators (`@register`, `@exposed`, …)|✅ Available|
+|Custom decorators|✅ Available|
+|`@deprecated`, `@since`, `@experimental`|✅ Available|
+|Signals (`signal:`)|✅ Available|
+|`defer`|✅ Available|
+|Introspectable enums|✅ Available|
+|Properties (`property`)|✅ Available|
+|Output redirection (`IOutput`)|✅ Available|
+|CMake toolchain|✅ Available|
+|Templates on decorators|🛠 Planned|
+|`dynamic` type|💡 Concept|
+|Pattern matching (`match`)|💡 Concept|
+|JSON / XML / other formats (native controls)|💡 Concept|
+|Automatic serialization (`@serializable`)|💡 Concept|
+
+## C++ compatibility
+
+C++Extended is a **superset** of C++: any valid C++ code is valid C++Extended code. An existing project can therefore be migrated file by file.
+
+## Named parameters
+
+Arguments can be passed by name, in any order.
 
 ```cpp
-
 int add(int a, int b);
 
-
-
 int main() {
-
-&#x20;   int r = add(b=5, a=4);
-
+    int r = add(b=5, a=4);
 }
-
 ```
 
+## Native decorators and reflection
 
+Native decorators let you register classes and expose members so they can be accessed **at runtime** by name.
 
-\---
-
-
-
-\## Décorateurs natifs et réflexion
-
-
-
-Les décorateurs natifs permettent d'enregistrer des classes et d'exposer des
-
-membres pour y accéder \*\*à l'exécution\*\* par leur nom.
-
-
-
-| Décorateur  | Rôle                                                        |
-
-|-------------|-------------------------------------------------------------|
-
-| `@register` | Enregistre la classe dans la fabrique (`factory`).          |
-
-| `@exposed`  | Expose un membre à la réflexion. \*\*Doit être `public`.\*\*    |
-
-
+|Decorator|Purpose|
+|-|-|
+|`@register`|Registers the class in the factory.|
+|`@exposed`|Exposes a member to reflection. It must be `public`.|
 
 ```cpp
-
 @register
-
 class A {
-
 public:
-
-&#x20;   @exposed int health;
-
+    @exposed int health;
 };
-
 ```
 
-
-
-\### Création d'instances
-
-
+### Creating instances
 
 ```cpp
-
-// Instanciation par nom
-
+// Instantiate by name
 A\* obj = stde::factory\_new("A");
+// transformed by cxxe into: new A()
 
-// → transformé par cxxe en : new A()
-
-
-
-// Récupération du type par nom
-
+// Retrieve the type by name
 A\* obj2 = new stde::factory\_find("A")();
-
-// → transformé par cxxe en : new A()
-
+// transformed by cxxe into: new A()
 ```
 
-
-
-\### Accès aux membres exposés
-
-
+### Accessing exposed members
 
 ```cpp
-
 obj->get\_member("health") = 4;
-
-// → transformé par cxxe en : obj->health = 4;
-
+// transformed by cxxe into: obj->health = 4;
 ```
 
+### Dynamic usage
 
-
-\### Utilisation dynamique
-
-
-
-Toutes ces utilisations sont résolues \*\*à l'exécution\*\*. Le nom peut donc
-
-provenir d'une source inconnue à la compilation :
-
-
+All of these are resolved **at runtime**, so the name can come from a source that is unknown at compile time.
 
 ```cpp
-
 stde::factory\_new(unknown\_string);
-
 ```
 
+> \[!IMPORTANT]
+> An `@exposed` member must be `public`.
 
+## Custom decorators
 
-> ⚠️ Un membre `@exposed` doit obligatoirement être `public`.
-
-
-
-\---
-
-
-
-\## Décorateurs personnalisés
-
-
-
-Vous pouvez déclarer vos propres décorateurs. Un décorateur reçoit la fonction
-
-décorée (`func`) et l'enveloppe à votre guise.
-
-
+You can declare your own decorators. A decorator receives the decorated function (`func`) and wraps it as needed.
 
 ```cpp
-
 void @my\_decorator() -> func(int a) {
-
-&#x20;   avant();
-
-&#x20;   func(a);
-
-&#x20;   apres();
-
+    before();
+    func(a);
+    after();
 }
-
 ```
 
-
-
-Un décorateur peut également prendre des \*\*paramètres\*\* :
-
-
+A decorator can also take **parameters**:
 
 ```cpp
-
-void @my\_decorator(/\* paramètres du décorateur \*/) -> func(int a) {
-
-&#x20;   avant();
-
-&#x20;   func(a);
-
-&#x20;   apres();
-
+void @my\_decorator(/\* decorator parameters \*/) -> func(int a) {
+    before();
+    func(a);
+    after();
 }
-
 ```
 
-
-
-Utilisation :
-
-
+Usage:
 
 ```cpp
-
 @my\_decorator
-
 void work(int a) { /\* ... \*/ }
-
 ```
 
+> \[!NOTE]
+> Support for \*\*templates\*\* on decorators is planned for a future release.
 
+## Lifecycle decorators
 
-> 🛠 Le support des \*\*templates\*\* sur les décorateurs est prévu dans une
+Three standard decorators document the evolution of your API.
 
-> prochaine version.
-
-
-
-\---
-
-
-
-\## Décorateurs de cycle de vie
-
-
-
-Trois décorateurs standard documentent et contrôlent l'évolution de votre API.
-
-
-
-| Décorateur              | Description                                                 |
-
-|-------------------------|-------------------------------------------------------------|
-
-| `@deprecated(msg)`      | Marque un élément comme obsolète, avec un message.          |
-
-| `@since(version)`       | Indique la version d'introduction de l'élément.             |
-
-| `@experimental(msg)`    | Signale une API instable, susceptible de changer.           |
-
-
+|Decorator|Description|
+|-|-|
+|`@deprecated(msg)`|Marks an element as obsolete, with a message.|
+|`@since(version)`|Indicates the version in which the element was introduced.|
+|`@experimental(msg)`|Flags an unstable API that may change.|
 
 ```cpp
-
 @since("1.2")
-
-@deprecated("Utilisez load\_v2()")
-
+@deprecated("Use load\_v2() instead")
 void load();
 
-
-
-@experimental("L'interface peut changer")
-
+@experimental("The interface may change")
 void new\_feature();
-
 ```
 
+## Signals
 
-
-\---
-
-
-
-\## Signaux
-
-
-
-Un `signal` détecte les changements d'une variable et exécute un bloc de code
-
-lorsqu'elle est modifiée. Il fonctionne \*\*partout\*\* : portée globale, classe,
-
-structure, etc.
-
-
+A `signal` detects changes to a variable and runs a block of code whenever it is modified. It works anywhere: global scope, classes, structs, and so on.
 
 ```cpp
-
 int my\_int = 0;
 
-
-
 signal: my\_int {
-
-&#x20;   var\_changed();
-
+    var\_changed();
 }
-
 ```
 
-
-
-Dans une classe :
-
-
+Inside a class:
 
 ```cpp
-
 class Player {
-
 public:
+    int score = 0;
 
-&#x20;   int score = 0;
-
-
-
-&#x20;   signal: score {
-
-&#x20;       update\_ui();
-
-&#x20;   }
-
+    signal: score {
+        update\_ui();
+    }
 };
-
 ```
 
+## defer
 
-
-\---
-
-
-
-\## `defer`
-
-
-
-`defer` exécute un bloc à la \*\*sortie de la portée courante\*\*, quel que soit
-
-le chemin de sortie (retour, exception, etc.).
-
-
+`defer` runs a block when the **current scope exits**, regardless of the exit path.
 
 ```cpp
-
 void process() {
+    FILE\* f = fopen("data.txt", "r");
+    defer { fclose(f); }
 
-&#x20;   FILE\* f = fopen("data.txt", "r");
-
-&#x20;   defer { fclose(f); }
-
-
-
-&#x20;   // ... utilisation de f ...
-
-}   // fclose(f) est appelé ici
-
+    // ... use f ...
+}   // fclose(f) is called here
 ```
 
+## Introspectable enums
 
-
-```cpp
-
-defer { call\_functions(); }
-
-```
-
-
-
-\---
-
-
-
-\## Enums introspectables
-
-
-
-Les enums sont introspectables : conversion `enum → string`, `string → enum`,
-
-et autres opérations de réflexion.
-
-
+Enums are introspectable: `enum → string` conversion, `string → enum` conversion, and other reflection operations.
 
 ```cpp
-
 enum class Color { Red, Green, Blue };
-
 ```
 
+The available introspection functions notably cover:
 
+* `enum → string` conversion;
+* `string → enum` conversion;
+* other reflection utilities on the enum's values.
 
-Les fonctions d'introspection disponibles couvrent notamment :
+## Properties (native getters/setters)
 
-
-
-\- la conversion `enum → string` ;
-
-\- la conversion `string → enum` ;
-
-\- d'autres utilitaires de réflexion sur les valeurs de l'enum.
-
-
-
-> Consultez la référence de la bibliothèque `stde` pour la liste exacte des
-
-> fonctions exposées.
-
-
-
-\---
-
-
-
-\## Propriétés (getter/setter natifs)
-
-
-
-Les classes et les structures supportent nativement les propriétés avec
-
-`get` et `set`, sans boilerplate.
-
-
+Classes and structs natively support properties with `get` and `set`, without boilerplate.
 
 ```cpp
-
 class Character {
-
-&#x20;   int health;
-
-
+    int health;
 
 public:
-
-&#x20;   property Health {
-
-&#x20;       get { return health; }
-
-&#x20;       set { health = clamp(value, 0, 100); }
-
-&#x20;   }
-
+    property Health {
+        get { return health; }
+        set { health = clamp(value, 0, 100); }
+    }
 };
-
 ```
 
-
-
-Utilisation :
-
-
+Usage:
 
 ```cpp
-
 Character c;
-
-c.Health = 150;          // appelle le setter → health = 100
-
-int h = c.Health;        // appelle le getter
-
+c.Health = 150;    // calls the setter: health = 100
+int h = c.Health;  // calls the getter
 ```
 
+## Output redirection (IOutput)
 
+All outputs can be redirected natively, regardless of the mechanism used in the code:
 
-\---
+* `std::cout`
+* `printf`
+* `std::print`
+* and other standard outputs
 
+Redirection is based on the **`IOutput`** interface: implement it to send output to a file, an editor console, the network, a log, and so on.
 
+## CMake toolchain
 
-\## Redirection des sorties (`IOutput`)
+C++Extended integrates with **CMake** through a dedicated toolchain. Extended sources are processed by `cxxe` before the regular C++ compilation, so the language can be adopted in existing projects without changing the build system.
 
+## Concepts (roadmap)
 
+> \[!WARNING]
+> The following items are \*\*concepts\*\* under consideration. Their syntax and behavior are not final, and they are not yet implemented.
 
-Toutes les sorties peuvent être redirigées nativement, quel que soit
+### dynamic type
 
-le mécanisme utilisé dans le code :
-
-
-
-\- `std::cout`
-
-\- `printf`
-
-\- `std::print`
-
-\- et les autres sorties standard
-
-
-
-La redirection repose sur l'interface \*\*`IOutput`\*\* : implémentez-la pour
-
-envoyer les sorties vers un fichier, une console d'éditeur, un réseau, un
-
-journal, etc.
-
-
-
-\---
-
-
-
-\## Toolchain CMake
-
-
-
-C++Extended s'intègre à \*\*CMake\*\* via une toolchain dédiée. Les sources
-
-étendues sont traitées par `cxxe` avant la compilation C++ classique, ce
-
-qui permet d'adopter le langage dans vos projets existants sans changer votre
-
-système de build.
-
-
-
-\---
-
-
-
-\## Concepts (roadmap)
-
-
-
-Les éléments suivants sont des \*\*concepts\*\* à l'étude. Leur syntaxe et leur
-
-comportement ne sont pas figés.
-
-
-
-\### Type `dynamic`
-
-
-
-Un type dont seul le \*\*runtime\*\* connaît le type réel, à la manière de Python.
-
-Il permet par exemple de stocker des valeurs de types différents dans un même
-
-conteneur.
-
-
+A type whose actual type is known only at **runtime**, Python-style. It allows, for example, storing values of different types in a single container.
 
 ```cpp
-
 std::vector<dynamic> items = { 42, "hello", 3.14 };
-
 ```
 
+### Pattern matching
 
-
-\### Pattern matching
-
-
-
-Un `match` permet de traiter une valeur selon son type. Dans chaque branche,
-
-la valeur est déjà convertie vers le type correspondant.
-
-
+A `match` statement handles a value according to its type. Inside each branch, the value is already cast to the matching type.
 
 ```cpp
-
 match value {
-
-&#x20;   int: printf("%d\\n", value);   // value est déjà un int ici
-
+    int: printf("%d\\n", value);  // value is already an int here
 }
-
 ```
 
+### JSON, XML and other data formats
 
+Native controls to work with common data formats (JSON, XML, etc.) directly from the language.
 
-\### JSON, XML et autres formats de données
+### Automatic serialization
 
-
-
-Des contrôles natifs pour manipuler les formats de données courants (JSON, XML,
-
-etc.) directement depuis le langage.
-
-
-
-\### Sérialisation automatique
-
-
-
-Le décorateur `@serializable` générera automatiquement la sérialisation et la
-
-désérialisation d'une classe.
-
-
+The `@serializable` decorator will automatically generate serialization and deserialization for a class.
 
 ```cpp
-
 @serializable
-
 class Config {
-
 public:
-
-&#x20;   int width;
-
-&#x20;   int height;
-
+    int width;
+    int height;
 };
-
 ```
 
+## Notes and limitations
 
-
-\---
-
-
-
-\## Notes et limitations
-
-
-
-\- Les exemples de cette documentation illustrent la syntaxe ; les noms exacts
-
-&#x20; des fonctions de la bibliothèque `stde` peuvent varier selon la version.
-
-\- Un membre `@exposed` doit être `public`.
-
-\- Les fonctionnalités marquées « Concept » ne sont pas encore implémentées.
-
-
-
-\---
-
-
-
-<p align="center"><sub>C++Extended — Documentation</sub></p>
-
-
+* The examples in this documentation illustrate the syntax; the exact names of `stde` library functions may vary between versions.
+* An `@exposed` member must be `public`.
+* Features marked "Concept" are not yet implemented.
 
