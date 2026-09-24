@@ -1,0 +1,25 @@
+#include <string>
+
+@register
+enum class Color { Red, Green, Blue };
+
+@register
+class Spawned {
+public:
+    @exposed int value = 11;
+};
+
+int main() {
+    std::string a = stde::enum_to_string(Color::Green);
+    Color b = stde::string_to_enum<Color>("Blue");
+
+    Spawned* p = stde::factory_new("Spawned");
+    int old = (int)p->get_member("value");
+    p->get_member("value") = 23;
+    int now = (int)p->get_member("value");
+
+    Spawned* q = new stde::factory_find("Spawned")();
+    delete q;
+    delete p;
+    return (a == "Green" && b == Color::Blue && old == 11 && now == 23) ? 0 : 1;
+}

@@ -1,0 +1,31 @@
+#include <cstdio>
+
+namespace Game {
+void @trace(int tag) -> func(int amount) {
+    std::printf("before %d %d\n", tag, amount);
+    func(amount);
+    std::printf("after %d %d\n", tag, amount);
+}
+
+class Player {
+public:
+    int health = 10;
+
+    property health {
+        get { return health; }
+        set { health = value < 0 ? 0 : value; }
+    }
+
+    @trace(9)
+    void hit(int amount) {
+        health -= amount;
+    }
+};
+}
+
+int main() {
+    Game::Player p;
+    p.hit(3);
+    std::printf("%d\n", p.health);
+    return p.health == 7 ? 0 : 1;
+}

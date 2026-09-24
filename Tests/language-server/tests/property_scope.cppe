@@ -1,0 +1,66 @@
+#include <cstdio>
+
+namespace A {
+class Character {
+public:
+    int health = 1;
+    property health {
+        get { return health; }
+        set { health = value; }
+    }
+
+    int bump() {
+        this->health = this->health + 1;
+        return this->health;
+    }
+};
+
+int read(Character& c) {
+    c.health = 8;
+    return c.health;
+}
+
+int transfer(Character& a, Character& b) {
+    b.health = a.health + 1;
+    return b.health;
+}
+}
+
+namespace B {
+class Character {
+public:
+    int health = 2;
+    property health {
+        get { return health; }
+        set { health = value; }
+    }
+};
+
+int read(Character& c) {
+    c.health = 9;
+    return c.health;
+}
+}
+
+struct Plain {
+    int health = 0;
+};
+
+int main() {
+    A::Character a;
+    B::Character b;
+    Plain p;
+    A::Character* ap = &a;
+    B::Character* bp = &b;
+    a.health = 3;
+    b.health = 4;
+    p.health = 5;
+    ap->health = 6;
+    bp->health = 7;
+    int x = a.health;
+    int y = b.health;
+    int z = p.health;
+    int t = A::transfer(a, a);
+    std::printf("%d %d %d %d\n", x, y, z, t);
+    return 0;
+}

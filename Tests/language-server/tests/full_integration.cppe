@@ -1,0 +1,180 @@
+#include <cstdio>
+#include <string>
+#include <vector>
+#include <cstdint>
+
+#define DEFAULT_HEALTH 10
+
+int combine(int left, int right);
+int combine(double left, double right);
+
+namespace Engine {
+namespace Math {
+struct Vec2 {
+    int x;
+    int y;
+    int length() const { return x + y; }
+};
+
+union Payload {
+    int integer;
+    float real;
+};
+
+enum class Axis { X, Y, Z };
+}
+
+using Math::Vec2;
+using Position = Math::Vec2;
+
+class NameStore {
+public:
+    std::string value;
+    NameStore(const char* s) : value(s) {}
+};
+}
+
+namespace Game {
+struct Inventory {
+    int coins = 0;
+    int add(int amount) { coins += amount; return coins; }
+};
+
+union StateBits {
+    std::uint32_t raw;
+    struct {
+        std::uint32_t active : 1;
+        std::uint32_t visible : 1;
+    } bits;
+};
+
+enum class State { Idle, Running, Dead };
+
+void @trace(int tag) -> func(int amount) {
+    std::printf("trace:%d:%d\n", tag, amount);
+    func(amount);
+}
+
+@register
+class Character {
+public:
+    @exposed int health = DEFAULT_HEALTH;
+    @exposed int score = 0;
+    Inventory inventory;
+    Engine::Position position{1, 2};
+
+    property health {
+        get { return health; }
+        set { health = value < 0 ? 0 : value; }
+    }
+
+    property score {
+        get { return score; }
+        set { score = value; }
+    }
+
+    Character() {}
+
+    @trace(7)
+    void damage(int amount) {
+        this->health -= amount;
+        this->score += amount;
+        inventory.add(amount);
+        int named = combine(right=2, left=health);
+        std::printf("damage:%d:%d\n", named, inventory.coins);
+    }
+
+    int heal(int amount) {
+        health += amount;
+        return health;
+    }
+
+    int read_score() const {
+        return score;
+    }
+};
+
+@register
+struct SpawnData {
+public:
+    @exposed int id = 41;
+};
+}
+
+int combine(int left, int right) {
+    return left + right;
+}
+
+int combine(double left, double right) {
+    return (int)(left + right);
+}
+
+int use_position(Engine::Position p, Engine::Math::Axis axis) {
+    (void)axis;
+    return p.x + p.y;
+}
+
+template <typename T>
+struct Box {
+    T value;
+    T get() const { return value; }
+};
+
+int main() {
+    Engine::Vec2 origin{3, 4};
+    Engine::Math::Payload payload{};
+    payload.integer = origin.length();
+    Engine::Math::Axis axis = Engine::Math::Axis::X;
+    Game::State state = Game::State::Running;
+    Game::StateBits bits{};
+    bits.raw = 0;
+    bits.bits.active = 1;
+
+    Game::Character character;
+    character.health = -5;
+    character.score = 2;
+    character.position.x = origin.x;
+    character.inventory.add(5);
+    character.damage(3);
+
+    int h = character.health;
+    int s = character.score;
+    int healed = character.heal(2);
+    int named = combine(second=3, first=4);
+    int pos = use_position(origin, axis);
+
+    dynamic runtime_value = h;
+    match runtime_value {
+        int: std::printf("match:%d\n", runtime_value);
+        default: std::printf("match:other\n");
+    }
+
+    Game::Character* made = stde::factory_new("Game::Character");
+    int dynamic_health = (int)made->get_member("health");
+    made->get_member("health") = 12;
+    int dynamic_score = (int)made->get_member("score");
+    delete made;
+
+    Game::SpawnData* spawn = stde::factory_new("Game::SpawnData");
+    int spawn_id = (int)spawn->get_member("id");
+    delete spawn;
+
+    Game::Character* found = new stde::factory_find("Game::Character")();
+    delete found;
+
+    Box<int> box{8};
+    int bx = box.get();
+
+    int old = character.health++;
+    int now = ++character.health;
+    character.health--;
+    character.score += 4;
+
+    std::printf("values:%d:%d:%d:%d:%d:%d:%d:%d:%d:%u:%d:%d:%d:%d:%d\n",
+        h, s, healed, named, pos, dynamic_health, dynamic_score, spawn_id, bx,
+        bits.raw, state == Game::State::Running, old, now, character.health, character.score);
+
+    return (payload.integer == 7 && h == 0 && s == 5 && healed == 2 && named == 7 &&
+            pos == 7 && dynamic_health == 10 && dynamic_score == 0 && spawn_id == 41 &&
+            bx == 8 && old == 2 && now == 4 && character.health == 3 && character.score == 9) ? 0 : 1;
+}

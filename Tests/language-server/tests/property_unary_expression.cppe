@@ -1,0 +1,15 @@
+class Counter {
+public:
+    int count = 3;
+    property count {
+        get { return count; }
+        set { count = value; }
+    }
+};
+
+int main() {
+    Counter c;
+    int old = c.count++;
+    int newer = ++c.count;
+    return (old == 3 && newer == 5 && c.count == 5) ? 0 : 1;
+}

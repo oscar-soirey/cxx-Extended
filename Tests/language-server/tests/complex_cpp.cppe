@@ -1,0 +1,69 @@
+#include <array>
+#include <cstdint>
+#include <string>
+#include <utility>
+
+namespace Engine {
+namespace Math {
+struct Vec2 {
+    float x = 0.0f;
+    float y = 0.0f;
+    Vec2() = default;
+    Vec2(float px, float py) : x(px), y(py) {}
+    Vec2 operator+(const Vec2& other) const { return {x + other.x, y + other.y}; }
+};
+
+union Payload {
+    std::int32_t code;
+    float amount;
+};
+
+enum class State : std::uint8_t { Idle = 0, Run, Stop };
+}
+
+template <typename T>
+class Store {
+public:
+    Store() = default;
+    void put(const T& value) { value_ = value; }
+    const T& get() const { return value_; }
+private:
+    T value_{};
+};
+
+using IntStore = Store<int>;
+typedef std::array<int, 4> IntArray;
+
+class Actor {
+public:
+    Actor() = default;
+    ~Actor() = default;
+    int value() const { return value_; }
+    void set_value(int v) { value_ = v; }
+    bool operator==(const Actor& other) const { return value_ == other.value_; }
+private:
+    int value_ = 0;
+};
+}
+
+namespace Game {
+using Engine::Actor;
+using namespace Engine::Math;
+
+[[nodiscard]] int compute(int seed) noexcept {
+    Vec2 a{static_cast<float>(seed), 2.0f};
+    Vec2 b{3.0f, 4.0f};
+    Vec2 c = a + b;
+    Engine::Math::Payload payload{};
+    payload.code = static_cast<std::int32_t>(c.x + c.y);
+    return payload.code;
+}
+}
+
+int main() {
+    Engine::Actor actor;
+    actor.set_value(Game::compute(5));
+    Engine::IntStore store;
+    store.put(actor.value());
+    return store.get() == 14 ? 0 : 1;
+}

@@ -1,0 +1,30 @@
+#include <cstdio>
+
+namespace Demo {
+class Character {
+public:
+    int health = 0;
+    property health {
+        get { return health; }
+        set { health = value; }
+    }
+};
+
+class Holder {
+public:
+    Character child;
+    Character* ptr;
+    Holder() : ptr(&child) {}
+    int run() {
+        child.health = 4;
+        ptr->health = child.health + 1;
+        return child.health + ptr->health;
+    }
+};
+}
+
+int main() {
+    Demo::Holder h;
+    std::printf("%d\n", h.run());
+    return h.run() == 10 ? 0 : 1;
+}

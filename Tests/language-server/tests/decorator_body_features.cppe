@@ -1,0 +1,29 @@
+#include <cstdio>
+
+class Character {
+public:
+    int health = 0;
+    property health {
+        get { return health; }
+        set { health = value; }
+    }
+};
+
+int add(int left, int right) { return left + right; }
+
+void @trace() -> func(int value) {
+    func(value);
+}
+
+@trace
+void work(int value) {
+    Character c;
+    c.health = value;
+    int x = add(right=2, left=c.health);
+    std::printf("%d %d\n", c.health, x);
+}
+
+int main() {
+    work(5);
+    return 0;
+}

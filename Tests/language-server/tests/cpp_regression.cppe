@@ -1,0 +1,43 @@
+// Regression: ordinary C++ must survive the CXXE front-end exactly.
+#include <cstdint>
+#define LOCAL_VALUE 7
+
+namespace Alpha {
+struct Data {
+    int x;
+    int y;
+};
+
+union Storage {
+    int i;
+    double d;
+};
+
+enum class Kind { A, B, C };
+
+class Worker {
+public:
+    Worker() = default;
+    ~Worker() = default;
+    int sum(int a, int b) const { return a + b; }
+};
+
+using Alias = Data;
+}
+
+namespace {
+int hidden = LOCAL_VALUE;
+}
+
+int free_function(int x) {
+    Alpha::Data d{ x, x + 1 };
+    Alpha::Storage s{};
+    s.i = d.x + d.y;
+    auto lambda = [d](int z) { return d.x + z; };
+    return lambda(2) + s.i;
+}
+
+int main() {
+    Alpha::Worker w;
+    return w.sum(1, 2) + free_function(hidden);
+}

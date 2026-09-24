@@ -1,0 +1,19 @@
+#include <cstdio>
+
+class Counter {
+public:
+    int count = 1;
+    property count {
+        get { return count; }
+        set { count = value < 0 ? 0 : value; }
+    }
+};
+
+int main() {
+    Counter c;
+    c.count += 4;
+    ++c.count;
+    c.count--;
+    std::printf("%d\n", c.count);
+    return c.count == 5 ? 0 : 1;
+}

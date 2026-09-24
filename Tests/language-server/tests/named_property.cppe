@@ -1,0 +1,17 @@
+class Character {
+public:
+    int health = 10;
+    property health {
+        get { return health; }
+        set { health = value; }
+    }
+};
+
+int consume(int value) { return value; }
+
+int main() {
+    Character c;
+    c.health = 7;
+    int r = consume(value=c.health);
+    return r == 7 ? 0 : 1;
+}

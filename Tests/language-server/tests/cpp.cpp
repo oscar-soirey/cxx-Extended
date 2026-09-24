@@ -1,0 +1,47 @@
+#include <string>
+#include <cstdio>
+
+namespace Outer {
+struct Point {
+    int x;
+    int y;
+};
+
+union Bits {
+    int i;
+    float f;
+};
+
+class Player {
+public:
+    int health = 100;
+    int score = 0;
+
+    Player() {}
+    ~Player() {}
+
+    int add(int a, int b) { return a + b; }
+    int choose(int a) {
+        return a + 1;
+    }
+};
+}
+
+int add_named(int left, int right) { return left + right; }
+
+void traced(int value) { std::printf("traced %d\n", value); }
+
+int main() {
+    Outer::Player p;
+    p.health = 10;
+    int x = add_named(right=2, left=3);
+    Character c;
+    c.health = 7;
+    int h = c.health;
+    int z = c.get_member("health");
+    auto* dyn = new Outer::Player();
+    delete dyn;
+    traced(5);
+    std::printf("%d %d %d\n", x, h, z);
+    return 0;
+}
