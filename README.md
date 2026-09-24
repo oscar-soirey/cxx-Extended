@@ -1,4 +1,4 @@
-![C++Extended logo](./docs/assets/icon-transparent_white_line.png)
+<img src="./docs/assets/icon-transparent_white_line.png" alt="C++Extended logo" width="64">
 
 # C++Extended (cxxe)
 
@@ -12,41 +12,41 @@ There is no new language to learn. You extend the one you already know.
 
 ## Table of contents
 
-* [Feature status](#feature-status)
-* [C++ compatibility](#c-compatibility)
-* [Named parameters](#named-parameters)
-* [Native decorators and reflection](#native-decorators-and-reflection)
-* [Custom decorators](#custom-decorators)
-* [Lifecycle decorators](#lifecycle-decorators)
-* [Signals](#signals)
-* [defer](#defer)
-* [Introspectable enums](#introspectable-enums)
-* [Properties (native getters/setters)](#properties-native-getterssetters)
-* [Output redirection (IOutput)](#output-redirection-ioutput)
-* [CMake toolchain](#cmake-toolchain)
-* [Concepts (roadmap)](#concepts-roadmap)
-* [Notes and limitations](#notes-and-limitations)
+- [Feature status](#feature-status)
+- [C++ compatibility](#c-compatibility)
+- [Named parameters](#named-parameters)
+- [Native decorators and reflection](#native-decorators-and-reflection)
+- [Custom decorators](#custom-decorators)
+- [Lifecycle decorators](#lifecycle-decorators)
+- [Signals](#signals)
+- [defer](#defer)
+- [Introspectable enums](#introspectable-enums)
+- [Properties (native getters/setters)](#properties-native-getterssetters)
+- [Output redirection (IOutput)](#output-redirection-ioutput)
+- [CMake toolchain](#cmake-toolchain)
+- [Concepts (roadmap)](#concepts-roadmap)
+- [Notes and limitations](#notes-and-limitations)
 
 ## Feature status
 
-|Feature|Status|
-|-|-|
-|All C++ features|✅ Available|
-|Named parameters|✅ Available|
-|Native decorators (`@register`, `@exposed`, …)|✅ Available|
-|Custom decorators|✅ Available|
-|`@deprecated`, `@since`, `@experimental`|✅ Available|
-|Signals (`signal:`)|✅ Available|
-|`defer`|✅ Available|
-|Introspectable enums|✅ Available|
-|Properties (`property`)|✅ Available|
-|Output redirection (`IOutput`)|✅ Available|
-|CMake toolchain|✅ Available|
-|Templates on decorators|🛠 Planned|
-|`dynamic` type|💡 Concept|
-|Pattern matching (`match`)|💡 Concept|
-|JSON / XML / other formats (native controls)|💡 Concept|
-|Automatic serialization (`@serializable`)|💡 Concept|
+| Feature | Status |
+|---|---|
+| All C++ features | ✅ Available |
+| Named parameters | ✅ Available |
+| Native decorators (`@register`, `@exposed`, …) | ✅ Available |
+| Custom decorators | ✅ Available |
+| `@deprecated`, `@since`, `@experimental` | ✅ Available |
+| Signals (`signal:`) | ✅ Available |
+| `defer` | ✅ Available |
+| Introspectable enums | ✅ Available |
+| Properties (`property`) | ✅ Available |
+| Output redirection (`IOutput`) | ✅ Available |
+| CMake toolchain | ✅ Available |
+| Templates on decorators | 🛠 Planned |
+| `dynamic` type | 💡 Concept |
+| Pattern matching (`match`) | 💡 Concept |
+| JSON / XML / other formats (native controls) | 💡 Concept |
+| Automatic serialization (`@serializable`) | 💡 Concept |
 
 ## C++ compatibility
 
@@ -68,10 +68,10 @@ int main() {
 
 Native decorators let you register classes and expose members so they can be accessed **at runtime** by name.
 
-|Decorator|Purpose|
-|-|-|
-|`@register`|Registers the class in the factory.|
-|`@exposed`|Exposes a member to reflection. It must be `public`.|
+| Decorator | Purpose |
+|---|---|
+| `@register` | Registers the class in the factory. |
+| `@exposed` | Exposes a member to reflection. It must be `public`. |
 
 ```cpp
 @register
@@ -85,18 +85,18 @@ public:
 
 ```cpp
 // Instantiate by name
-A\* obj = stde::factory\_new("A");
+A* obj = stde::factory_new("A");
 // transformed by cxxe into: new A()
 
 // Retrieve the type by name
-A\* obj2 = new stde::factory\_find("A")();
+A* obj2 = new stde::factory_find("A")();
 // transformed by cxxe into: new A()
 ```
 
 ### Accessing exposed members
 
 ```cpp
-obj->get\_member("health") = 4;
+obj->get_member("health") = 4;
 // transformed by cxxe into: obj->health = 4;
 ```
 
@@ -105,10 +105,10 @@ obj->get\_member("health") = 4;
 All of these are resolved **at runtime**, so the name can come from a source that is unknown at compile time.
 
 ```cpp
-stde::factory\_new(unknown\_string);
+stde::factory_new(unknown_string);
 ```
 
-> \[!IMPORTANT]
+> [!IMPORTANT]
 > An `@exposed` member must be `public`.
 
 ## Custom decorators
@@ -116,7 +116,7 @@ stde::factory\_new(unknown\_string);
 You can declare your own decorators. A decorator receives the decorated function (`func`) and wraps it as needed.
 
 ```cpp
-void @my\_decorator() -> func(int a) {
+void @my_decorator() -> func(int a) {
     before();
     func(a);
     after();
@@ -126,7 +126,7 @@ void @my\_decorator() -> func(int a) {
 A decorator can also take **parameters**:
 
 ```cpp
-void @my\_decorator(/\* decorator parameters \*/) -> func(int a) {
+void @my_decorator(/* decorator parameters */) -> func(int a) {
     before();
     func(a);
     after();
@@ -136,30 +136,30 @@ void @my\_decorator(/\* decorator parameters \*/) -> func(int a) {
 Usage:
 
 ```cpp
-@my\_decorator
-void work(int a) { /\* ... \*/ }
+@my_decorator
+void work(int a) { /* ... */ }
 ```
 
-> \[!NOTE]
-> Support for \*\*templates\*\* on decorators is planned for a future release.
+> [!NOTE]
+> Support for **templates** on decorators is planned for a future release.
 
 ## Lifecycle decorators
 
 Three standard decorators document the evolution of your API.
 
-|Decorator|Description|
-|-|-|
-|`@deprecated(msg)`|Marks an element as obsolete, with a message.|
-|`@since(version)`|Indicates the version in which the element was introduced.|
-|`@experimental(msg)`|Flags an unstable API that may change.|
+| Decorator | Description |
+|---|---|
+| `@deprecated(msg)` | Marks an element as obsolete, with a message. |
+| `@since(version)` | Indicates the version in which the element was introduced. |
+| `@experimental(msg)` | Flags an unstable API that may change. |
 
 ```cpp
 @since("1.2")
-@deprecated("Use load\_v2() instead")
+@deprecated("Use load_v2() instead")
 void load();
 
 @experimental("The interface may change")
-void new\_feature();
+void new_feature();
 ```
 
 ## Signals
@@ -167,10 +167,10 @@ void new\_feature();
 A `signal` detects changes to a variable and runs a block of code whenever it is modified. It works anywhere: global scope, classes, structs, and so on.
 
 ```cpp
-int my\_int = 0;
+int my_int = 0;
 
-signal: my\_int {
-    var\_changed();
+signal: my_int {
+    var_changed();
 }
 ```
 
@@ -182,7 +182,7 @@ public:
     int score = 0;
 
     signal: score {
-        update\_ui();
+        update_ui();
     }
 };
 ```
@@ -193,7 +193,7 @@ public:
 
 ```cpp
 void process() {
-    FILE\* f = fopen("data.txt", "r");
+    FILE* f = fopen("data.txt", "r");
     defer { fclose(f); }
 
     // ... use f ...
@@ -210,9 +210,9 @@ enum class Color { Red, Green, Blue };
 
 The available introspection functions notably cover:
 
-* `enum → string` conversion;
-* `string → enum` conversion;
-* other reflection utilities on the enum's values.
+- `enum → string` conversion;
+- `string → enum` conversion;
+- other reflection utilities on the enum's values.
 
 ## Properties (native getters/setters)
 
@@ -242,10 +242,10 @@ int h = c.Health;  // calls the getter
 
 All outputs can be redirected natively, regardless of the mechanism used in the code:
 
-* `std::cout`
-* `printf`
-* `std::print`
-* and other standard outputs
+- `std::cout`
+- `printf`
+- `std::print`
+- and other standard outputs
 
 Redirection is based on the **`IOutput`** interface: implement it to send output to a file, an editor console, the network, a log, and so on.
 
@@ -255,8 +255,8 @@ C++Extended integrates with **CMake** through a dedicated toolchain. Extended so
 
 ## Concepts (roadmap)
 
-> \[!WARNING]
-> The following items are \*\*concepts\*\* under consideration. Their syntax and behavior are not final, and they are not yet implemented.
+> [!WARNING]
+> The following items are **concepts** under consideration. Their syntax and behavior are not final, and they are not yet implemented.
 
 ### dynamic type
 
@@ -272,7 +272,7 @@ A `match` statement handles a value according to its type. Inside each branch, t
 
 ```cpp
 match value {
-    int: printf("%d\\n", value);  // value is already an int here
+    int: printf("%d\n", value);  // value is already an int here
 }
 ```
 
@@ -295,7 +295,6 @@ public:
 
 ## Notes and limitations
 
-* The examples in this documentation illustrate the syntax; the exact names of `stde` library functions may vary between versions.
-* An `@exposed` member must be `public`.
-* Features marked "Concept" are not yet implemented.
-
+- The examples in this documentation illustrate the syntax; the exact names of `stde` library functions may vary between versions.
+- An `@exposed` member must be `public`.
+- Features marked "Concept" are not yet implemented.
