@@ -1,4 +1,4 @@
-<img src="./docs/assets/icon-transparent_white_line.png" alt="C++Extended logo" width="64">
+<img src="./docs/assets/icon-transparent_white_line.png" alt="C++Extended logo" width="110">
 
 # C++Extended (cxxe)
 
