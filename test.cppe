@@ -1,0 +1,15 @@
+#include <iostream>
+
+@register class A {
+public:
+	int life;
+	@exposed int elife;
+	@exposed void EShow() { std::cout << "Hello" << std::endl; }
+	void Show() { std::cout << "Hello" << std::endl; }
+};
+
+int main(int argc, char** argv) {
+	A* myclass = stde::factory_new(argv[1]);
+	myclass->get_member(argv[2])();
+	return 0;
+}
