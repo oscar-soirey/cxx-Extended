@@ -281,6 +281,68 @@ static int property_matches_type_context(const IR *ir, int64_t fn_id, const char
     return 0;
 }
 
+/* "const ns::Box<int>&" -> "ns::Box": drops cv/ref/ptr, elaborated
+   keywords and template arguments. */
+static char *bare_type_name(const char *t) {
+    Str o;
+    int depth = 0;
+    str_init(&o);
+    while (*t) {
+        if (*t == '<') { depth++; t++; continue; }
+        if (*t == '>') { if (depth) depth--; t++; continue; }
+        if (depth) { t++; continue; }
+        if (isalpha((unsigned char)*t) || *t == '_') {
+            const char *w = t;
+            size_t n;
+            while (isalnum((unsigned char)*t) || *t == '_') t++;
+            n = (size_t)(t - w);
+            if ((n == 5 && !strncmp(w, "const", 5)) || (n == 8 && !strncmp(w, "volatile", 8)) ||
+                (n == 8 && !strncmp(w, "typename", 8)) || (n == 5 && !strncmp(w, "class", 5)) ||
+                (n == 6 && !strncmp(w, "struct", 6)) || (n == 5 && !strncmp(w, "union", 5))) continue;
+            str_putn(&o, w, n);
+            continue;
+        }
+        if (*t == ':' && t[1] == ':') { if (o.len) str_put(&o, "::"); t += 2; continue; }
+        t++;
+    }
+    return str_take(&o);
+}
+
+static int is_known_class_name(const IR *ir, const char *name) {
+    size_t i;
+    const char *leaf = name;
+    if (!name || !*name) return 0;
+    for (i = 0; name[i]; ++i) if (name[i] == ':' && name[i + 1] == ':') leaf = name + i + 2;
+    for (i = 0; i < ir->node_count; ++i) {
+        const IRNode *n = &ir->nodes[i];
+        if (n->kind != N_CLASS && n->kind != N_STRUCT && n->kind != N_UNION) continue;
+        if ((n->qualified && !strcmp(n->qualified, name)) || (n->name && !strcmp(n->name, leaf))) return 1;
+    }
+    return 0;
+}
+
+static int unique_property_by_name(const IR *ir, const char *member, int64_t *out_id) {
+    size_t i;
+    int64_t found = -1;
+    for (i = 0; i < ir->node_count; ++i) {
+        const IRNode *n = &ir->nodes[i];
+        if (!n->name || strcmp(n->name, member)) continue;
+        if (n->kind == N_PROPERTY) {
+            if (found >= 0) return 0;
+            found = (int64_t)i;
+        } else if (n->kind == N_FIELD_DECL && n->parent >= 0) {
+            /* A same-named field is fine only if it backs a property. */
+            int64_t c, has_prop = 0;
+            for (c = ir->nodes[n->parent].first_child; c >= 0; c = ir->nodes[c].next_sibling)
+                if (ir->nodes[c].kind == N_PROPERTY && ir->nodes[c].name && !strcmp(ir->nodes[c].name, member)) has_prop = 1;
+            if (!has_prop) return 0;
+        }
+    }
+    if (found < 0) return 0;
+    if (out_id) *out_id = found;
+    return 1;
+}
+
 int resolve_property_for_member_ir(const IR *ir, size_t sep_tok, const char *receiver,
                                           const char *member, int64_t *out_id) {
     int64_t fn_id, receiver_param;
@@ -357,16 +419,26 @@ int resolve_property_for_member_ir(const IR *ir, size_t sep_tok, const char *rec
             }
         }
     }
-    if (!type.len) { str_free(&type); return 0; }
-    for (i = 0; i < ir->node_count; ++i) {
-        const IRNode *p = &ir->nodes[i];
-        if (p->kind != N_PROPERTY || !p->name || strcmp(p->name, member)) continue;
-        if (property_matches_type_context(ir, fn_id, type.data, (int64_t)i)) {
-            if (out_id) *out_id = (int64_t)i;
-            str_free(&type);
-            return 1;
+    if (type.len) {
+        char *bare = bare_type_name(type.data);
+        for (i = 0; i < ir->node_count; ++i) {
+            const IRNode *p = &ir->nodes[i];
+            if (p->kind != N_PROPERTY || !p->name || strcmp(p->name, member)) continue;
+            if (property_matches_type_context(ir, fn_id, bare, (int64_t)i)) {
+                if (out_id) *out_id = (int64_t)i;
+                free(bare);
+                str_free(&type);
+                return 1;
+            }
         }
+        /* The receiver has a known class type without such a property: it is
+           a plain member access. */
+        if (is_known_class_name(ir, bare)) { free(bare); str_free(&type); return 0; }
+        free(bare);
     }
     str_free(&type);
-    return 0;
+    /* Receiver type unknown (v[i].x, f().x, auto&, smart pointers...): fall
+       back to the member name when it designates exactly one property and
+       no class declares a plain field with that name. */
+    return unique_property_by_name(ir, member, out_id);
 }
