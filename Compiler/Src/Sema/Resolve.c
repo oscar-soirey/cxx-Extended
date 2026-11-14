@@ -93,16 +93,16 @@ void resolve_native_features(IR *ir) {
             IRNode *target = &ir->nodes[d->aux];
             if (d->flags & NF_DECORATOR_REGISTER) {
                 if (!(target->kind == N_CLASS || target->kind == N_STRUCT || target->kind == N_UNION || target->kind == N_ENUM))
-                    die("@register can only be applied to a class, struct, union, or enum (token %" PRIu64 ")", target->first_tok);
+                    ir_die_at(ir, target->first_tok, "@register can only be applied to a class, struct, union, or enum");
                 if (target->kind == N_ENUM && (!target->name || !*target->name))
-                    die("@register requires a named enum (token %" PRIu64 ")", target->first_tok);
+                    ir_die_at(ir, target->first_tok, "@register requires a named enum");
                 target->flags |= NF_REGISTERED;
             }
             if (d->flags & NF_DECORATOR_EXPOSED) {
                 if (!(target->kind == N_FIELD_DECL || target->kind == N_METHOD))
-                    die("@exposed can only be applied to a public member variable or method (token %" PRIu64 ")", target->first_tok);
+                    ir_die_at(ir, target->first_tok, "@exposed can only be applied to a public member variable or method");
                 if ((target->flags & NF_ACCESS_MASK) != NF_ACCESS_PUBLIC)
-                    die("@exposed member '%s' must be public", target->name ? target->name : "<unnamed>");
+                    ir_die_at(ir, target->first_tok, "@exposed member '%s' must be public", target->name ? target->name : "<unnamed>");
                 target->flags |= NF_EXPOSED;
             }
         }
@@ -303,56 +303,235 @@ int node_is_named_call(const IR *ir, int64_t id) {
     return 0;
 }
 
-int find_matching_function(const IR *ir, const IRNode *call, int64_t *out) {
+/* ------------------------------------------------------------------------- */
+/* Named arguments: overload/constructor lookup and argument planning         */
+/* ------------------------------------------------------------------------- */
+
+static int param_is_variadic(const IR *ir, int64_t param);
+
+static int is_callable_decl_kind(NodeKind k) {
+    return k == N_FUNCTION || k == N_METHOD || k == N_CONSTRUCTOR || k == N_OPERATOR_FUNCTION;
+}
+
+static const char *leaf_name(const char *q) {
+    const char *leaf = q;
     size_t i;
-    int best = -1;
-    size_t named_count = 0, call_arg_count = 0;
-    int64_t c;
-    for (c = call->first_child; c >= 0; c = ir->nodes[c].next_sibling) {
-        if (ir->nodes[c].kind == N_NAMED_ARG || ir->nodes[c].kind == N_CALL_ARG) call_arg_count++;
-        if (ir->nodes[c].kind == N_NAMED_ARG) named_count++;
-    }
+    if (!q) return NULL;
+    for (i = 0; q[i]; ++i) if (q[i] == ':' && q[i + 1] == ':') leaf = q + i + 2;
+    return leaf;
+}
+
+/* `a::b::c` ends with `b::c` on a `::` boundary. */
+static int qualified_suffix(const char *full, const char *suffix) {
+    size_t fl, sl;
+    if (!full || !suffix) return 0;
+    fl = strlen(full); sl = strlen(suffix);
+    if (sl > fl || strcmp(full + fl - sl, suffix) != 0) return 0;
+    return sl == fl || (fl - sl >= 2 && full[fl - sl - 1] == ':' && full[fl - sl - 2] == ':');
+}
+
+/* `Type name(args)`: a direct-initialisation whose callee token is really
+   the variable name. Returns the class name when constructors of it exist. */
+static const char *constructor_class_for_call(const IR *ir, const IRNode *call) {
+    size_t i;
+    const char *type;
+    if (call->first_tok == 0 || call->first_tok >= ir->tokens.n) return NULL;
+    if (ir->tokens.v[call->first_tok - 1].kind != TK_IDENTIFIER) return NULL;
+    type = ir->tokens.v[call->first_tok - 1].text;
     for (i = 0; i < ir->node_count; ++i) {
         const IRNode *fn = &ir->nodes[i];
-        size_t params = 0;
-        int matches = 1;
-        if (!(fn->kind == N_FUNCTION || fn->kind == N_METHOD || fn->kind == N_CONSTRUCTOR ||
-              fn->kind == N_OPERATOR_FUNCTION)) continue;
-        if (call->resolved_name && *call->resolved_name && fn->qualified && *fn->qualified) {
-            if (strcmp(call->resolved_name, fn->qualified) != 0) {
-                if (!(call->name && fn->name && strcmp(call->name, fn->name) == 0)) continue;
-            }
-        } else if (call->name && fn->name && strcmp(call->name, fn->name) != 0) {
-            continue;
-        }
-        {
-            int64_t p = fn->first_child;
-            while (p >= 0) {
-                if (ir->nodes[p].kind == N_PARAM_DECL) params++;
-                p = ir->nodes[p].next_sibling;
-            }
-        }
-        if (named_count > params) continue;
-        if (call_arg_count > params) continue;
-        for (c = call->first_child; c >= 0; c = ir->nodes[c].next_sibling) {
-            const IRNode *arg = &ir->nodes[c];
-            int64_t q;
-            if (arg->kind != N_NAMED_ARG) continue;
-            int found = 0;
-            for (q = fn->first_child; q >= 0; q = ir->nodes[q].next_sibling) {
-                const IRNode *param = &ir->nodes[q];
-                if (param->kind == N_PARAM_DECL && param->name && arg->name && strcmp(param->name, arg->name) == 0) {
-                    found = 1; break;
-                }
-            }
-            if (!found) { matches = 0; break; }
-        }
-        if (!matches) continue;
-        best = (int)i;
-        break;
+        if (fn->kind == N_CONSTRUCTOR && fn->name && !strcmp(fn->name, type)) return type;
     }
-    if (best >= 0 && out) *out = best;
-    return best >= 0;
+    return NULL;
+}
+
+static int callee_matches(const IRNode *call, const IRNode *fn, const char *ctor_class) {
+    if (!is_callable_decl_kind(fn->kind) || !fn->name) return 0;
+    if (ctor_class) return fn->kind == N_CONSTRUCTOR && !strcmp(fn->name, ctor_class);
+    if (!call->name || strcmp(call->name, fn->name) != 0) return 0;
+    /* A qualified call (ns::f, Type::create) must agree with the declaration. */
+    if (call->qualified && strstr(call->qualified, "::") && fn->qualified && strstr(fn->qualified, "::"))
+        return qualified_suffix(fn->qualified, call->qualified) ||
+               (call->resolved_name && qualified_suffix(fn->qualified, call->resolved_name));
+    return 1;
+}
+
+static size_t collect_params(const IR *ir, const IRNode *fn, int64_t **out, int *variadic) {
+    size_t n = 0;
+    int64_t c, *v = NULL;
+    *variadic = 0;
+    for (c = fn->first_child; c >= 0; c = ir->nodes[c].next_sibling) {
+        const IRNode *pn = &ir->nodes[c];
+        if (pn->kind != N_PARAM_DECL) continue;
+        if (param_is_variadic(ir, c)) *variadic = 1;
+        v = (int64_t *)xrealloc(v, (n + 1) * sizeof(*v));
+        v[n++] = c;
+    }
+    *out = v;
+    return n;
+}
+
+int64_t function_param_id(const IR *ir, const IRNode *fn, size_t index) {
+    size_t idx = 0;
+    int64_t c;
+    for (c = fn->first_child; c >= 0; c = ir->nodes[c].next_sibling) {
+        if (ir->nodes[c].kind != N_PARAM_DECL) continue;
+        if (idx++ == index) return c;
+    }
+    return -1;
+}
+
+/* Default value text of a parameter (the parser stores it in `value`), so
+   it also works for declarations imported from headers. */
+static char *param_own_default(const IR *ir, int64_t param) {
+    const char *v = ir->nodes[param].value, *e;
+    Str o;
+    if (!(ir->nodes[param].flags & NF_PARAM_HAS_DEFAULT) || !v) return NULL;
+    while (*v && isspace((unsigned char)*v)) v++;
+    e = v + strlen(v);
+    while (e > v && isspace((unsigned char)e[-1])) e--;
+    if (e == v) return NULL;
+    str_init(&o);
+    str_putn(&o, v, (size_t)(e - v));
+    return str_take(&o);
+}
+
+static int param_is_variadic(const IR *ir, int64_t param) {
+    const IRNode *pn = &ir->nodes[param];
+    if (pn->flags & NF_PARAM_HAS_DEFAULT) return 0;
+    return (pn->value && strstr(pn->value, "...")) || (pn->type && strstr(pn->type, "..."));
+}
+
+/* Default value of parameter `index`, looked up on `fn` and on every other
+   declaration of the same entity (defaults usually live on the declaration
+   in the header, not on the definition). Caller frees. */
+char *param_default_text(const IR *ir, const IRNode *fn, size_t index) {
+    size_t i, pc = function_param_count(ir, fn);
+    int64_t p = function_param_id(ir, fn, index);
+    char *d = p >= 0 ? param_own_default(ir, p) : NULL;
+    if (d) return d;
+    for (i = 0; i < ir->node_count; ++i) {
+        const IRNode *other = &ir->nodes[i];
+        if (other == fn || other->kind != fn->kind || !other->qualified || !fn->qualified) continue;
+        if (strcmp(other->qualified, fn->qualified) != 0 || function_param_count(ir, other) != pc) continue;
+        p = function_param_id(ir, other, index);
+        if (p >= 0 && (d = param_own_default(ir, p)) != NULL) return d;
+    }
+    return NULL;
+}
+
+static int try_candidate(const IR *ir, const IRNode *call, const IRNode *fn, NamedCallPlan *plan, Str *why) {
+    int64_t *params = NULL, c;
+    int variadic = 0;
+    size_t pc = collect_params(ir, fn, &params, &variadic), pos = 0, i;
+    int64_t *slot = (int64_t *)xcalloc(pc ? pc : 1, sizeof(*slot));
+    const char *fname = fn->qualified ? fn->qualified : fn->name;
+    for (i = 0; i < pc; ++i) slot[i] = -1;
+    for (c = call->first_child; c >= 0; c = ir->nodes[c].next_sibling) {
+        const IRNode *arg = &ir->nodes[c];
+        if (arg->kind == N_NAMED_ARG) {
+            size_t pi = SIZE_MAX;
+            for (i = 0; i < pc; ++i)
+                if (ir->nodes[params[i]].name && arg->name && !strcmp(ir->nodes[params[i]].name, arg->name)) { pi = i; break; }
+            if (pi == SIZE_MAX) {
+                if (why) { why->len = 0; str_put(why, "'"); str_put(why, fname); str_put(why, "' has no parameter named '"); str_put(why, arg->name ? arg->name : "?"); str_put(why, "'"); }
+                goto fail;
+            }
+            if (slot[pi] >= 0) {
+                if (why) { why->len = 0; str_put(why, "parameter '"); str_put(why, arg->name); str_put(why, "' of '"); str_put(why, fname); str_put(why, "' is given more than once"); }
+                goto fail;
+            }
+            slot[pi] = c;
+        } else if (arg->kind == N_CALL_ARG) {
+            while (pos < pc && slot[pos] >= 0) pos++;
+            if (pos >= pc || variadic) {
+                if (why) { why->len = 0; str_put(why, variadic ? "named arguments cannot be combined with a variadic parameter list in a call to '" : "too many arguments in call to '"); str_put(why, fname); str_put(why, "'"); }
+                goto fail;
+            }
+            slot[pos++] = c;
+        }
+    }
+    {
+        size_t last_used = 0;
+        int any = 0;
+        for (i = 0; i < pc; ++i) if (slot[i] >= 0) { last_used = i; any = 1; }
+        for (i = 0; i < pc; ++i) {
+            if (slot[i] >= 0) continue;
+            char *d = param_default_text(ir, fn, i);
+            if (d) { free(d); continue; }
+            {
+                if (why) { why->len = 0; str_put(why, "missing argument for parameter '"); str_put(why, ir->nodes[params[i]].name ? ir->nodes[params[i]].name : "?"); str_put(why, "' of '"); str_put(why, fname); str_put(why, "'"); }
+                goto fail;
+            }
+        }
+        plan->fn = (int64_t)(fn - ir->nodes);
+        plan->param_count = any ? last_used + 1 : 0;
+        plan->slot = slot;
+        free(params);
+        return 1;
+    }
+fail:
+    free(slot);
+    free(params);
+    return 0;
+}
+
+int plan_named_call(const IR *ir, const IRNode *call, NamedCallPlan *plan, Str *why) {
+    size_t i, candidates = 0;
+    const char *ctor_class = NULL;
+    Str first_why;
+    memset(plan, 0, sizeof(*plan));
+    plan->fn = -1;
+    /* `Type var(args)` first; otherwise the callee name. */
+    ctor_class = constructor_class_for_call(ir, call);
+    str_init(&first_why);
+    for (i = 0; i < ir->node_count; ++i) {
+        const IRNode *fn = &ir->nodes[i];
+        if (!callee_matches(call, fn, ctor_class)) continue;
+        candidates++;
+        if (try_candidate(ir, call, fn, plan, candidates == 1 ? &first_why : NULL)) { str_free(&first_why); return 1; }
+    }
+    if (!candidates) { str_free(&first_why); return 0; }
+    if (why) {
+        why->len = 0;
+        if (candidates > 1) { str_put(why, "no overload of '"); str_put(why, leaf_name(call->name)); str_put(why, "' accepts these arguments (first candidate: "); }
+        str_put(why, first_why.data ? first_why.data : "invalid named arguments");
+        if (candidates > 1) str_put(why, ")");
+    }
+    str_free(&first_why);
+    return -1;
+}
+
+void named_call_plan_free(NamedCallPlan *plan) {
+    free(plan->slot);
+    memset(plan, 0, sizeof(*plan));
+    plan->fn = -1;
+}
+
+int find_matching_function(const IR *ir, const IRNode *call, int64_t *out) {
+    NamedCallPlan plan;
+    int r = plan_named_call(ir, call, &plan, NULL);
+    if (r == 1 && out) *out = plan.fn;
+    named_call_plan_free(&plan);
+    return r == 1;
+}
+
+void check_named_calls(IR *ir) {
+    size_t i;
+    Str why;
+    str_init(&why);
+    for (i = 0; i < ir->node_count; ++i) {
+        const IRNode *call = &ir->nodes[i];
+        NamedCallPlan plan;
+        int r;
+        if (call->kind != N_FUNC_CALL || (call->flags & NF_EXTERNAL_DECL) || !node_is_named_call(ir, (int64_t)i)) continue;
+        r = plan_named_call(ir, call, &plan, &why);
+        named_call_plan_free(&plan);
+        if (r < 0) ir_die_at(ir, call->first_tok, "%s", why.data ? why.data : "invalid named arguments");
+        if (r == 0) ir_warn_at(ir, call->first_tok, "no declaration of '%s' is visible: '%s(name=value)' is kept as a C++ assignment expression",
+                               call->name ? call->name : "?", call->name ? call->name : "?");
+    }
+    str_free(&why);
 }
 
 int64_t function_param_by_name(const IR *ir, const IRNode *fn, const char *name, size_t *index_out) {
