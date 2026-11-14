@@ -8,13 +8,13 @@ if "%OUT%"=="" set "OUT=%ROOT%..\cxxe.exe"
 gcc -std=c11 -O2 -Wall -Wextra -I"%ROOT%Src" ^
   "%ROOT%Src\Cli\Cli.c" ^
   "%ROOT%Src\Cli\Main.c" ^
+  "%ROOT%Src\CodeGen\Decorators\EmitDecorators.c" ^
   "%ROOT%Src\CodeGen\EmitCalls.c" ^
-  "%ROOT%Src\CodeGen\EmitDecorators.c" ^
   "%ROOT%Src\CodeGen\EmitMatch.c" ^
-  "%ROOT%Src\CodeGen\EmitProperties.c" ^
   "%ROOT%Src\CodeGen\EmitRegistry.c" ^
   "%ROOT%Src\CodeGen\EmitSource.c" ^
   "%ROOT%Src\CodeGen\Emitter.c" ^
+  "%ROOT%Src\CodeGen\Properties\EmitProperties.c" ^
   "%ROOT%Src\Core\FileIo.c" ^
   "%ROOT%Src\Core\Memory.c" ^
   "%ROOT%Src\Core\Path.c" ^

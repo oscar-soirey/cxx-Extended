@@ -8,13 +8,13 @@ set(CMAKE_C_EXTENSIONS OFF)
 add_executable(cxxe
     Src/Cli/Cli.c
     Src/Cli/Main.c
+    Src/CodeGen/Decorators/EmitDecorators.c
     Src/CodeGen/EmitCalls.c
-    Src/CodeGen/EmitDecorators.c
     Src/CodeGen/EmitMatch.c
-    Src/CodeGen/EmitProperties.c
     Src/CodeGen/EmitRegistry.c
     Src/CodeGen/EmitSource.c
     Src/CodeGen/Emitter.c
+    Src/CodeGen/Properties/EmitProperties.c
     Src/Core/FileIo.c
     Src/Core/Memory.c
     Src/Core/Path.c

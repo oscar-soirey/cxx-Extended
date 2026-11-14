@@ -1,5 +1,5 @@
 /*
- * CodeGen/EmitProperties.c
+ * CodeGen/Properties/EmitProperties.c
  *
  * Property getters/setters and property access rewriting.
  */
@@ -51,11 +51,45 @@ static void emit_property_block(const IR *ir, const IRNode *block, const IRNode 
     }
 }
 
+/* Declared type of the field backing a property ("" when unknown), without
+   storage specifiers. The setter takes that type so `value` behaves like the
+   field (e.g. `value + "!"` works for a std::string property). */
+static void property_field_type(const IR *ir, const IRNode *prop, Str *out) {
+    int64_t c;
+    if (prop->parent < 0 || !prop->name) return;
+    for (c = ir->nodes[prop->parent].first_child; c >= 0; c = ir->nodes[c].next_sibling) {
+        const IRNode *f = &ir->nodes[c];
+        const char *t;
+        if (f->kind != N_FIELD_DECL || !f->name || strcmp(f->name, prop->name) || !f->type) continue;
+        t = f->type;
+        for (;;) {
+            while (*t && isspace((unsigned char)*t)) t++;
+            if (!strncmp(t, "mutable", 7) && isspace((unsigned char)t[7])) { t += 7; continue; }
+            if (!strncmp(t, "inline", 6) && isspace((unsigned char)t[6])) { t += 6; continue; }
+            break;
+        }
+        {
+            size_t z = strlen(t);
+            while (z && isspace((unsigned char)t[z - 1])) z--;
+            str_putn(out, t, z);
+        }
+        return;
+    }
+}
+
 void emit_property(const IR *ir, const IRNode *prop, Str *out) {
     int64_t g=property_child_kind(ir,prop,N_PROPERTY_GET), s=property_child_kind(ir,prop,N_PROPERTY_SET);
     const char *name=prop->name?prop->name:"Property";
-    if(g>=0){ str_put(out,"decltype(auto) get_"); str_put(out,name); str_put(out,"() {"); emit_property_block(ir,&ir->nodes[g],prop,0,out); str_put(out,"}\n"); }
-    if(s>=0){ str_put(out,"template <typename CXXEPropertyValue>\nvoid set_"); str_put(out,name); str_put(out,"(CXXEPropertyValue&& CXXEPropertyAssignedValue) {"); emit_property_block(ir,&ir->nodes[s],prop,1,out); str_put(out,"}\n"); }
+    /* Getters are const so properties stay readable through const objects
+       and references (use `mutable` fields for caches). */
+    if(g>=0){ str_put(out,"decltype(auto) get_"); str_put(out,name); str_put(out,"() const {"); emit_property_block(ir,&ir->nodes[g],prop,0,out); str_put(out,"}\n"); }
+    if(s>=0){
+        Str ft; str_init(&ft); property_field_type(ir,prop,&ft);
+        if(ft.len){ str_put(out,"void set_"); str_put(out,name); str_put(out,"(const "); str_putn(out,ft.data,ft.len); str_put(out,"& CXXEPropertyAssignedValue) {"); }
+        else { str_put(out,"template <typename CXXEPropertyValue>\nvoid set_"); str_put(out,name); str_put(out,"(CXXEPropertyValue&& CXXEPropertyAssignedValue) {"); }
+        str_free(&ft);
+        emit_property_block(ir,&ir->nodes[s],prop,1,out); str_put(out,"}\n");
+    }
 }
 
 int property_access_is_write(const IR *ir, const IRNode *node) {

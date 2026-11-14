@@ -1,5 +1,5 @@
 /*
- * CodeGen/EmitDecorators.c
+ * CodeGen/Decorators/EmitDecorators.c
  *
  * Custom decorator expansion.
  */
