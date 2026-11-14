@@ -1,0 +1,6 @@
+#include <cstdio>
+int calls = 0;
+int @counted() -> func(int a) { ++calls; return func(a); }
+@counted
+int square(int a) { return a * a; }
+int main() { int r = square(5); bool ok = r == 25 && calls == 1; std::printf(ok ? "OK\n" : "FAIL r=%d calls=%d\n", r, calls); return ok ? 0 : 1; }

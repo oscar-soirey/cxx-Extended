@@ -1,0 +1,11 @@
+#include <string>
+class Lexer { public: Lexer(std::string path, int tab_width, bool keep_trivia) : p(path), tab(tab_width), keep(keep_trivia) {} std::string p; int tab; bool keep; };
+struct Opt { Opt(int level, bool verbose = false) : l(level), v(verbose) {} int l; bool v; };
+int main() {
+    Lexer a(keep_trivia=true, tab_width=4, path="x");
+    Lexer* b = new Lexer(tab_width=2, path="y", keep_trivia=false);
+    Opt o(verbose=true, level=3);
+    Opt o2 = Opt(level=1);
+    bool ok = a.tab == 4 && a.keep && a.p == "x" && b->tab == 2 && !b->keep && o.l == 3 && o.v && o2.l == 1;
+    delete b; return ok ? 0 : 1;
+}

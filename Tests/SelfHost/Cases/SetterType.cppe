@@ -1,0 +1,3 @@
+#include <string>
+class Node { public: std::string name; property name { get { return name; } set { name = value + "!"; } } };
+int main() { Node n; n.name = "root"; return n.name == "root!" ? 0 : 1; }

@@ -1,0 +1,3 @@
+#include <cstdio>
+template <typename T> T pick(T first, T second) { return second; }
+int main() { int v = pick(second=2, first=1); std::printf(v == 2 ? "OK\n" : "FAIL\n"); return v == 2 ? 0 : 1; }

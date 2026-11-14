@@ -1,0 +1,31 @@
+#include <cstdio>
+#include <string>
+#include <vector>
+#include <memory>
+namespace cxxe {
+struct Token { int kind = 0; std::string text; };
+class Parser {
+public:
+    explicit Parser(std::vector<Token> toks) : toks_(std::move(toks)) {}
+    virtual ~Parser() = default;
+    Parser(const Parser&) = delete;
+    Parser& operator=(const Parser&) = delete;
+    [[nodiscard]] const Token& peek(size_t k = 0) const noexcept { return toks_[pos_ + k < toks_.size() ? pos_ + k : toks_.size() - 1]; }
+    bool accept(const std::string& t) { if (peek().text == t) { ++pos_; return true; } return false; }
+    template <typename F> void each(F&& f) const { for (auto const& t : toks_) f(t); }
+    int count() const;
+    int errors = 0;
+    property errors { get { return errors; } set { errors = value; } }
+private:
+    std::vector<Token> toks_;
+    size_t pos_ = 0;
+};
+int Parser::count() const { int n = 0; each([&](const Token&) { ++n; }); return n; }
+}
+int main() {
+    cxxe::Parser p({{1, "a"}, {2, "+"}, {1, "b"}});
+    bool ok = p.accept("a") && p.peek().text == "+" && p.count() == 3;
+    p.errors = 2;
+    ok = ok && p.errors == 2;
+    std::printf(ok ? "OK\n" : "FAIL\n"); return ok ? 0 : 1;
+}

@@ -1,0 +1,15 @@
+#include <cstdio>
+#include <string>
+dynamic pick(int i) { if (i == 0) return 4; if (i == 1) return std::string("s"); return 2.5; }
+int main() {
+    int hits = 0;
+    for (int i = 0; i < 3; ++i) {
+        dynamic v = pick(i);
+        match v {
+            int: hits += 1;
+            std::string: hits += 10;
+            default: hits += 100;
+        }
+    }
+    std::printf(hits == 111 ? "OK\n" : "FAIL %d\n", hits); return hits == 111 ? 0 : 1;
+}

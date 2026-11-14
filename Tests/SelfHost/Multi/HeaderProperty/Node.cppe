@@ -1,0 +1,3 @@
+#include "Node.hppe"
+int Node::bump(int by, int times) { depth = depth + by * times; return depth; }
+int make(int kind, int line) { return kind * 10 + line; }

@@ -1,0 +1,23 @@
+#include <cstdio>
+#include <string>
+#include <vector>
+class Node {
+public:
+    std::string name;
+    property name {
+        get { return name; }
+        set { name = value + "!"; }
+    }
+    int depth = 0;
+    property depth {
+        get { return depth; }
+        set { depth = value < 0 ? 0 : value; }
+    }
+};
+int main() {
+    Node n; n.name = "root"; n.depth = -5;
+    std::vector<Node> v(2); v[1].depth = 3; v[1].depth += 2;
+    Node* p = &v[0]; p->name = std::string("p");
+    bool ok = n.name == "root!" && n.depth == 0 && v[1].depth == 5 && p->name == "p!";
+    std::printf(ok ? "OK\n" : "FAIL\n"); return ok ? 0 : 1;
+}

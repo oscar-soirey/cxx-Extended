@@ -1,0 +1,9 @@
+#include <vector>
+class N { public: int d = 0; property d { get { return d; } set { d = value < 0 ? 0 : value; } } };
+struct Holder { N items[2]; N& at(int i) { return items[i]; } };
+int main() {
+    std::vector<N> v(2); v[0].d = -3; v[1].d = 5; v[1].d += 2;
+    Holder h; h.items[1].d = -1; h.at(0).d = -7;
+    N* arr = v.data(); arr[1].d = -9;
+    return (v[0].d == 0 && v[1].d == 0 && h.items[1].d == 0 && h.at(0).d == 0) ? 0 : 1;
+}

@@ -1,0 +1,13 @@
+#include <vector>
+#include <map>
+template <typename T, typename A = std::vector<std::vector<T>>> struct Wrap { A a; };
+template <typename K, typename V> class Table { public: std::map<K, V> m; V get(const K& k, V fallback) const { auto it = m.find(k); return it == m.end() ? fallback : it->second; } };
+template <typename T> constexpr T zero = T{};
+template <typename T> T clampv(T v, T lo, T hi) { return v < lo ? lo : (v > hi ? hi : v); }
+int add(int a, int b) { return a + b; }
+int main() {
+    Table<int, int> t; t.m[1] = 5;
+    int r = add(b=2, a=1) + t.get(fallback=9, k=1) + clampv(hi=10, v=50, lo=0) + zero<int>;
+    Wrap<int> w; (void)w;
+    return r == 18 ? 0 : 1;
+}

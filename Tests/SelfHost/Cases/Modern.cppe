@@ -1,0 +1,62 @@
+#include <cstdio>
+#include <string>
+#include <string_view>
+#include <vector>
+#include <variant>
+#include <memory>
+#include <map>
+#include <optional>
+#include <concepts>
+#include <compare>
+#include <utility>
+#define CHECK(x) do { if (!(x)) { std::printf("FAIL %s:%d\n", __FILE__, __LINE__); return 1; } } while (0)
+#define MULTI(a, b) \
+    ((a) +          \
+     (b))
+namespace cx::front::detail { constexpr int k = 1'000'000; }
+enum class Kind : unsigned char { Ident, Number, Punct };
+template <typename T> concept Numeric = std::integral<T> || std::floating_point<T>;
+template <Numeric T> constexpr T twice(T v) { return v * 2; }
+template <typename... Ts> constexpr auto sum(Ts... ts) { return (ts + ... + 0); }
+struct Pos { int line = 0, col = 0; auto operator<=>(const Pos&) const = default; };
+struct Tok { Kind kind; std::string text; Pos pos; };
+struct Lit { long v; }; struct Bin; using Expr = std::variant<Lit, std::unique_ptr<Bin>>;
+struct Bin { char op; Expr l, r; };
+long eval(const Expr& e) {
+    return std::visit([](auto const& n) -> long {
+        using N = std::decay_t<decltype(n)>;
+        if constexpr (std::is_same_v<N, Lit>) return n.v;
+        else { long a = eval(n->l), b = eval(n->r); return n->op == '+' ? a + b : a * b; }
+    }, e);
+}
+constexpr unsigned long long operator""_kb(unsigned long long v) { return v * 1024; }
+template <typename T> class Vec2 { public: T x{}, y{}; Vec2 operator+(Vec2 o) const { return {x + o.x, y + o.y}; } };
+[[nodiscard]] static std::optional<int> parse_int(std::string_view s) {
+    int r = 0; for (char c : s) { if (c < '0' || c > '9') return std::nullopt; r = r * 10 + (c - '0'); } return r;
+}
+int main() {
+    const char* raw = R"(a "quoted" ) string)";
+    const char* raw2 = R"xx(with )" inside)xx";
+    CHECK(std::string(raw).size() == 19);
+    CHECK(std::string_view(raw2) == "with )\" inside");
+    CHECK('\'' == 39 && '\\' == 92);
+    std::vector<std::vector<int>> grid{{1, 2}, {3, 4}};
+    int s = 0; for (auto& row : grid) for (int v : row) s += v;
+    CHECK(s == 10);
+    std::map<std::string, int> m{{"a", 1}, {"b", 2}};
+    for (auto const& [k, v] : m) { (void)k; s += v; }
+    CHECK(s == 13);
+    auto add = [base = 5]<typename T>(T v) { return base + v; };
+    CHECK(add(2) == 7);
+    CHECK(twice(21) == 42 && sum(1, 2, 3) == 6 && MULTI(1, 2) == 3);
+    CHECK((8 >> 1) == 4 && (1 << 3) == 8 && 2_kb == 2048);
+    Expr e = std::make_unique<Bin>(Bin{'+', Lit{2}, std::make_unique<Bin>(Bin{'*', Lit{3}, Lit{4}})});
+    CHECK(eval(e) == 14);
+    Pos p1{1, 2}, p2{1, 3}; CHECK(p1 < p2);
+    Vec2<int> v = Vec2<int>{1, 2} + Vec2<int>{3, 4}; CHECK(v.x == 4 && v.y == 6);
+    CHECK(parse_int("123").value_or(0) == 123 && !parse_int("1x"));
+    Tok t{.kind = Kind::Ident, .text = "id", .pos = {.line = 1, .col = 1}};
+    CHECK(t.kind == Kind::Ident && cx::front::detail::k == 1000000);
+    int a = 3, b = 4; bool lt = a < b && b > a; CHECK(lt);
+    std::printf("OK\n"); return 0;
+}

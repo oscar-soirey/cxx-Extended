@@ -1,0 +1,7 @@
+#include "Node.hppe"
+int main() {
+    Node n; n.depth = -3;
+    int m = make(line=2, kind=1);
+    n.bump(times=2, by=3);
+    return (n.depth == 6 && m == 12) ? 0 : 1;
+}

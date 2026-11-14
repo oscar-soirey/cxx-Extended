@@ -1,0 +1,26 @@
+#include <cstdio>
+#include <string>
+struct Token { int kind; int line; };
+int make(int kind, int line, int col = 0) { return kind * 100 + line * 10 + col; }
+std::string label(const std::string& name, int width) { return name + std::to_string(width); }
+class Lexer {
+public:
+    Lexer(int tab_width, bool keep_trivia) : tab(tab_width), keep(keep_trivia) {}
+    int next(bool skip_ws, int limit) { return (skip_ws ? 1 : 0) + limit + tab; }
+    static int create(int a, int b) { return a - b; }
+    int tab; bool keep;
+};
+template <typename T> T pick(T first, T second) { return second; }
+int main() {
+    int r = 0;
+    if (make(line=2, kind=1) != 120) { std::printf("FAIL default arg\n"); r = 1; }
+    if (make(col=3, line=2, kind=1) != 123) { std::printf("FAIL 3 named\n"); r = 1; }
+    if (label(width=3, name="x") != "x3") { std::printf("FAIL string\n"); r = 1; }
+    Lexer lx(4, true);
+    if (lx.next(limit=10, skip_ws=true) != 15) { std::printf("FAIL method\n"); r = 1; }
+    if (Lexer::create(b=1, a=5) != 4) { std::printf("FAIL static\n"); r = 1; }
+    if (make(kind=make(line=0, kind=0), line=1) != 10) { std::printf("FAIL nested\n"); r = 1; }
+    int x = 0; x = 5; if (x != 5) r = 1;
+    if (r == 0) std::printf("OK\n");
+    return r;
+}

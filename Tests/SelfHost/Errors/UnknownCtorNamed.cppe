@@ -1,0 +1,2 @@
+class L { public: L(int a, int b) {} };
+int main() { L l(c=1, a=2); return 0; }

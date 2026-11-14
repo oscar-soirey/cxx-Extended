@@ -1,0 +1,3 @@
+#include <cstdio>
+template <typename T> class Box { public: T v{}; property v { get { return v; } set { v = value * 2; } } };
+int main() { Box<int> b; b.v = 4; std::printf(b.v == 8 ? "OK\n" : "FAIL\n"); return b.v == 8 ? 0 : 1; }

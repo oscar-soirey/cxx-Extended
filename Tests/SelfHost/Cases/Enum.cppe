@@ -1,0 +1,9 @@
+#include <cstdio>
+#include <string>
+namespace cx { @register enum class TokenKind { Identifier, Number = 10, Punct }; }
+int main() {
+    std::string s = stde::enum_to_string(cx::TokenKind::Number);
+    cx::TokenKind k = stde::string_to_enum<cx::TokenKind>("Punct");
+    bool ok = s == "Number" && k == cx::TokenKind::Punct;
+    std::printf(ok ? "OK\n" : "FAIL %s\n", s.c_str()); return ok ? 0 : 1;
+}

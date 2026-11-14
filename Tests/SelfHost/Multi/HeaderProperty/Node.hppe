@@ -1,0 +1,3 @@
+#pragma once
+class Node { public: int depth = 0; property depth { get { return depth; } set { depth = value < 0 ? 0 : value; } } int bump(int by, int times); };
+int make(int kind, int line);

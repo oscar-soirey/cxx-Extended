@@ -1,0 +1,2 @@
+int f(int a, int b) { return a - b; }
+int main() { return f(c=1, a=2); }

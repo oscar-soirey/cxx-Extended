@@ -1,0 +1,5 @@
+#include <cstdio>
+int calls = 0;
+void @trace() -> func(int a) { ++calls; func(a); }
+class Pass { public: int seen = 0; @trace void run(int a) { seen += a; } };
+int main() { Pass p; p.run(3); p.run(4); bool ok = p.seen == 7 && calls == 2; std::printf(ok ? "OK\n" : "FAIL\n"); return ok ? 0 : 1; }
