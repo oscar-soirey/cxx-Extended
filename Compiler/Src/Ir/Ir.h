@@ -143,6 +143,7 @@ typedef enum {
 #define NF_EXTERNAL_DECL     0x00004000u
 
 #define NF_INCLUDE_NEXT      0x00008000u
+#define NF_PARAM_HAS_DEFAULT 0x00010000u /* N_PARAM_DECL: value holds the default expression */
 
 typedef struct {
     NodeKind kind;
@@ -171,9 +172,15 @@ typedef struct {
     IRNode *nodes;
     size_t node_count;
     size_t node_cap;
+    char *path; /* source path for diagnostics (not serialized) */
 } IR;
 
 void ir_init(IR *ir);
+/* Replaces dst's node tree by src's (src loses its nodes). */
+void ir_replace_nodes(IR *dst, IR *src);
+/* Diagnostics located at a token: "<path>:<line>:<col>: error: ...". */
+void ir_die_at(const IR *ir, uint64_t tok, const char *fmt, ...);
+void ir_warn_at(const IR *ir, uint64_t tok, const char *fmt, ...);
 void ir_free(IR *ir);
 int64_t ir_add_node(IR *ir, NodeKind kind, uint64_t first, uint64_t last, int64_t parent);
 void ir_add_child(IR *ir, int64_t parent, int64_t child);

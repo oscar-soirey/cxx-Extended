@@ -11,9 +11,60 @@
 
 void ir_init(IR *ir) { memset(ir, 0, sizeof(*ir)); }
 
+static void ir_report(const IR *ir, uint64_t tok, const char *level, const char *fmt, va_list ap) {
+    const char *path = (ir && ir->path) ? ir->path : "<input>";
+    if (ir && tok < ir->tokens.n)
+        fprintf(stderr, "%s:%u:%u: %s: ", path, ir->tokens.v[tok].line, ir->tokens.v[tok].column, level);
+    else
+        fprintf(stderr, "%s: %s: ", path, level);
+    vfprintf(stderr, fmt, ap);
+    fputc('\n', stderr);
+}
+
+void ir_die_at(const IR *ir, uint64_t tok, const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    ir_report(ir, tok, "error", fmt, ap);
+    va_end(ap);
+    exit(1);
+}
+
+void ir_warn_at(const IR *ir, uint64_t tok, const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    ir_report(ir, tok, "warning", fmt, ap);
+    va_end(ap);
+}
+
+static void ir_free_nodes(IR *ir) {
+    size_t i;
+    for (i = 0; i < ir->node_count; ++i) {
+        free(ir->nodes[i].name);
+        free(ir->nodes[i].qualified);
+        free(ir->nodes[i].type);
+        free(ir->nodes[i].return_type);
+        free(ir->nodes[i].operator_spelling);
+        free(ir->nodes[i].value);
+        free(ir->nodes[i].resolved_name);
+    }
+    free(ir->nodes);
+    ir->nodes = NULL;
+    ir->node_count = ir->node_cap = 0;
+}
+
+void ir_replace_nodes(IR *dst, IR *src) {
+    ir_free_nodes(dst);
+    dst->nodes = src->nodes;
+    dst->node_count = src->node_count;
+    dst->node_cap = src->node_cap;
+    src->nodes = NULL;
+    src->node_count = src->node_cap = 0;
+}
+
 void ir_free(IR *ir) {
     size_t i;
     free(ir->source);
+    free(ir->path);
     tokens_free(&ir->tokens);
     for (i = 0; i < ir->node_count; ++i) {
         free(ir->nodes[i].name);
