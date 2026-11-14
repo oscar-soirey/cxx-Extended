@@ -17,6 +17,8 @@ typedef struct {
     size_t include_dir_n, include_dir_cap;
 } IncludeContext;
 
+size_t import_included_declarations(IR *dst, const IR *scan, const char *main_path,
+                                    const char *const *include_dirs, size_t include_dir_n);
 void discover_included_decorators(IR *ir, const char *main_path, const char *const *include_dirs, size_t include_dir_n);
 
 #endif /* CXXE_FRONTEND_INCLUDE_RESOLVER_H */

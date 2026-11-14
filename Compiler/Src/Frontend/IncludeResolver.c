@@ -91,7 +91,7 @@ static int parse_include_spec0(const char *raw, char **name_out, int *angled_out
 static int header_extension_candidate0(const char *path) {
     const char *dot = strrchr(path, '.');
     if (!dot) return 1;
-    return strcmp(dot, ".h") == 0 || strcmp(dot, ".hpp") == 0 || strcmp(dot, ".he") == 0 ||
+    return strcmp(dot, ".h") == 0 || strcmp(dot, ".hpp") == 0 || strcmp(dot, ".he") == 0 || strcmp(dot, ".hppe") == 0 ||
            strcmp(dot, ".hh") == 0 || strcmp(dot, ".hxx") == 0 || strcmp(dot, ".inl") == 0 || strcmp(dot, ".inc") == 0;
 }
 
@@ -122,6 +122,44 @@ static char *resolve_include_path0(const char *current_file, const char *name, i
     return NULL;
 }
 
+/* Node kinds that make up a declaration's shape. Expression nodes from
+   bodies are not imported: their `aux` fields reference nodes of the
+   header's own IR and are meaningless in the including unit. */
+static int declaration_shape_kind(NodeKind k) {
+    switch (k) {
+    case N_CLASS: case N_STRUCT: case N_UNION: case N_ENUM: case N_ENUMERATOR:
+    case N_TEMPLATE: case N_FIELD_DECL: case N_PROPERTY: case N_PROPERTY_GET: case N_PROPERTY_SET:
+    case N_FUNCTION: case N_METHOD: case N_CONSTRUCTOR: case N_DESTRUCTOR: case N_OPERATOR_FUNCTION:
+    case N_PARAM_DECL:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+static int64_t clone_ir_subtree(IR *dst, const IR *src, int64_t src_id, int64_t parent, uint32_t extra_flags);
+
+static int64_t clone_declaration_shape(IR *dst, const IR *src, int64_t src_id, int64_t parent) {
+    const IRNode *orig = &src->nodes[src_id];
+    int64_t n = ir_add_node(dst, orig->kind, UINT64_MAX, UINT64_MAX, parent);
+    int64_t c;
+    /* Keep access bits; drop semantic flags (registration...) that belong to
+       the header's own translation. */
+    dst->nodes[n].flags = (orig->flags & (NF_ACCESS_MASK | NF_PARAM_HAS_DEFAULT)) | NF_EXTERNAL_DECL;
+    dst->nodes[n].aux = UINT64_MAX;
+    node_set_name(dst, n, orig->name);
+    node_set_qualified(dst, n, orig->qualified);
+    node_set_type(dst, n, orig->type);
+    node_set_return(dst, n, orig->return_type);
+    node_set_value(dst, n, orig->value);
+    node_set_resolved(dst, n, orig->resolved_name);
+    for (c = orig->first_child; c >= 0; c = src->nodes[c].next_sibling) {
+        if (!declaration_shape_kind(src->nodes[c].kind)) continue;
+        ir_add_child(dst, n, clone_declaration_shape(dst, src, c, n));
+    }
+    return n;
+}
+
 static int64_t clone_ir_subtree(IR *dst, const IR *src, int64_t src_id, int64_t parent, uint32_t extra_flags) {
     const IRNode *orig = &src->nodes[src_id];
     int64_t n = ir_add_node(dst, orig->kind, UINT64_MAX, UINT64_MAX, parent);
@@ -141,13 +179,27 @@ static int64_t clone_ir_subtree(IR *dst, const IR *src, int64_t src_id, int64_t 
     return n;
 }
 
-static void import_custom_decorators(IR *dst, const IR *src) {
+/* Declarations an including file may need: custom decorators, classes
+   (fields, properties, constructors, methods) and free functions (named
+   arguments, default values). Nested ones come with their outermost owner.
+   Imported nodes are flagged NF_EXTERNAL_DECL and own no local tokens. */
+static int importable_kind(NodeKind k) {
+    return k == N_CUSTOM_DECORATOR || k == N_CLASS || k == N_STRUCT || k == N_UNION ||
+           k == N_FUNCTION || k == N_METHOD || k == N_CONSTRUCTOR || k == N_OPERATOR_FUNCTION;
+}
+
+static void import_declarations(IR *dst, const IR *src) {
     size_t i;
     for (i = 0; i < src->node_count; ++i) {
         const IRNode *orig = &src->nodes[i];
-        int64_t n;
-        if (orig->kind != N_CUSTOM_DECORATOR) continue;
-        n = clone_ir_subtree(dst, src, (int64_t)i, 0, NF_EXTERNAL_DECL);
+        int64_t n, p;
+        int nested = 0;
+        if (!importable_kind(orig->kind)) continue;
+        for (p = orig->parent; p >= 0; p = src->nodes[p].parent)
+            if (importable_kind(src->nodes[p].kind)) { nested = 1; break; }
+        if (nested) continue;
+        if (orig->kind == N_CUSTOM_DECORATOR) n = clone_ir_subtree(dst, src, (int64_t)i, 0, NF_EXTERNAL_DECL);
+        else n = clone_declaration_shape(dst, src, (int64_t)i, 0);
         ir_add_child(dst, 0, n);
     }
 }
@@ -174,7 +226,7 @@ static void discover_one_include(IR *dst, const char *current_file, const char *
     lex_cpp(hdr.source, hdr.source_size, &hdr.tokens);
     parse_source(&hdr);
     discover_includes_recursive(&hdr, resolved, ctx);
-    import_custom_decorators(dst, &hdr);
+    import_declarations(dst, &hdr);
     ir_free(&hdr);
     free(resolved);
 }
@@ -186,6 +238,33 @@ static void discover_includes_recursive(IR *dst, const char *current_file, Inclu
         if ((n->kind != N_INCLUDE && n->kind != N_IMPORT) || !n->value) continue;
         discover_one_include(dst, current_file, n->value, ctx, (IRNode *)n);
     }
+}
+
+/* Imports into `dst` the declarations of every header included by `scan`
+   (transitively). Returns the number of imported top-level declarations. */
+size_t import_included_declarations(IR *dst, const IR *scan, const char *main_path,
+                                    const char *const *include_dirs, size_t include_dir_n) {
+    IncludeContext ctx;
+    size_t i, before = dst->node_count;
+    memset(&ctx, 0, sizeof(ctx));
+    for (i = 0; i < include_dir_n; ++i) include_add_dir(&ctx, include_dirs[i]);
+    if (g_cxxe_executable_dir) {
+        char *stde_dir = path_join0(g_cxxe_executable_dir, "stde");
+        include_add_dir(&ctx, stde_dir);
+        free(stde_dir);
+    }
+    {
+        char *root = normalize_path0(main_path);
+        include_mark_visited(&ctx, root);
+        free(root);
+    }
+    for (i = 0; i < scan->node_count; ++i) {
+        const IRNode *n = &scan->nodes[i];
+        if ((n->kind != N_INCLUDE && n->kind != N_IMPORT) || !n->value) continue;
+        discover_one_include(dst, main_path, n->value, &ctx, NULL);
+    }
+    include_ctx_free(&ctx);
+    return dst->node_count - before;
 }
 
 void discover_included_decorators(IR *ir, const char *main_path, const char *const *include_dirs, size_t include_dir_n) {

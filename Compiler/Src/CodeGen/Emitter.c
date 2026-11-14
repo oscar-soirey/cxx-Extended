@@ -13,7 +13,24 @@
 #include "Ir/Ir.h"
 #include "Sema/Resolve.h"
 
+/* CXXE headers (.hppe) are translated to .hpp next to the generated
+   sources, so includes of them are redirected. */
+static int include_targets_cxxe_header(const IRNode *n) {
+    return n->kind == N_INCLUDE && n->value && strstr(n->value, ".hppe") != NULL;
+}
+
+static void emit_include_directive(const IR *ir, const IRNode *n, Str *out) {
+    const char *t = ir->tokens.v[n->first_tok].text, *hit;
+    while ((hit = strstr(t, ".hppe")) != NULL) {
+        str_putn(out, t, (size_t)(hit - t));
+        str_put(out, ".hpp");
+        t = hit + 5;
+    }
+    str_put(out, t);
+}
+
 static int node_needs_native_emit(const IR *ir, const IRNode *n) {
+    if (include_targets_cxxe_header(n)) return 1;
     if (n->kind == N_DECORATOR) return 1;
     if (n->kind == N_CUSTOM_DECORATOR) return 1;
     if (n->kind == N_PROPERTY) return 1;
@@ -70,7 +87,9 @@ void emit_native_token_range(const IR *ir, Str *out, size_t begin_tok, size_t en
             if (ge > gb) emit_source_range_with_properties(ir, out, gb, ge);
         }
         bs = ir->tokens.v[first_tok].byte_start;
-        if (n->kind == N_DECORATOR || n->kind == N_CUSTOM_DECORATOR) {
+        if (include_targets_cxxe_header(n)) {
+            emit_include_directive(ir, n, out);
+        } else if (n->kind == N_DECORATOR || n->kind == N_CUSTOM_DECORATOR) {
             /* CXXE-only syntax disappears. */
         } else if (n->kind == N_MATCH_STMT) {
             emit_match_statement(ir, n, out);
@@ -159,7 +178,8 @@ static void emit_cpp(const IR *ir, const char *path) {
             if (bs < cursor) continue;
             if (bs > ir->source_size || be > ir->source_size || be < bs) continue;
             emit_source_range_with_properties(ir, &out, cursor, bs);
-            if (n->kind == N_DECORATOR || n->kind == N_CUSTOM_DECORATOR) { /* CXXE-only syntax. */ }
+            if (include_targets_cxxe_header(n)) { emit_include_directive(ir, n, &out); }
+            else if (n->kind == N_DECORATOR || n->kind == N_CUSTOM_DECORATOR) { /* CXXE-only syntax. */ }
             else if (n->kind == N_MATCH_STMT) { emit_match_statement(ir, n, &out); }
             else if (n->kind == N_PROPERTY) { emit_property(ir, n, &out); }
             else if (n->kind == N_UNARY_EXPR) { emit_property_unary(ir, n, &out); }

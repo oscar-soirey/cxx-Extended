@@ -20,8 +20,14 @@
 # The runtime is NOT searched for on disk. It is generated directly by
 # cxxe.exe with `cxxe runtime export ...`.
 #   CXXE_INCLUDE_HEADERS_AS_DEPENDENCIES
-#                         when ON, .he/.h/.hpp found recursively in INCLUDE_DIRS
+#                         when ON, .he/.h/.hpp/.hppe found recursively in INCLUDE_DIRS
 #                         are dependencies of .cppe transformations (default ON)
+#
+# CXXE headers (.hppe) may use every CXXE feature (properties, decorators...).
+# Each .hppe listed in SOURCES, found in INCLUDE_DIRS or next to a .cppe
+# source is translated to a .hpp in the generated tree (same relative layout),
+# and `#include "x.hppe"` is emitted as `#include "x.hpp"`. The generated
+# include directories are added to the target before the original ones.
 
 include_guard(GLOBAL)
 
@@ -178,6 +184,7 @@ function(_cxxe_collect_header_dependencies out_var include_dirs)
                     "${_inc}/*.hh"
                     "${_inc}/*.hpp"
                     "${_inc}/*.hxx"
+                    "${_inc}/*.hppe"
                     "${_inc}/*.cpp"
                     "${_inc}/*.cppe")
                 list(APPEND _deps ${_headers})
@@ -268,15 +275,45 @@ function(cxxe_transform_sources OUT_VAR)
 
     _cxxe_collect_header_dependencies(_header_deps "${_absolute_include_dirs}")
 
-    set(_generated)
+    # CXXE headers: explicit ones, those of the include directories and those
+    # sitting next to .cppe sources.
+    set(_all_sources)
+    set(_hppe_dirs ${_absolute_include_dirs})
     foreach(_source IN LISTS ARG_SOURCES)
         get_filename_component(_abs_source "${_source}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
+        list(APPEND _all_sources "${_abs_source}")
+        get_filename_component(_ext "${_abs_source}" LAST_EXT)
+        if(_ext STREQUAL ".cppe")
+            get_filename_component(_src_dir "${_abs_source}" DIRECTORY)
+            list(APPEND _hppe_dirs "${_src_dir}")
+        endif()
+    endforeach()
+    list(REMOVE_DUPLICATES _hppe_dirs)
+    foreach(_dir IN LISTS _hppe_dirs)
+        if(IS_DIRECTORY "${_dir}" AND NOT _dir STREQUAL CXXE_STDE_DIR)
+            file(GLOB_RECURSE _found_hppe CONFIGURE_DEPENDS "${_dir}/*.hppe")
+            list(APPEND _all_sources ${_found_hppe})
+        endif()
+    endforeach()
+    list(REMOVE_DUPLICATES _all_sources)
+
+    # Generated counterparts of the include directories, searched first.
+    set(_generated_include_dirs "${_output_dir}")
+    foreach(_inc IN LISTS _absolute_include_dirs)
+        file(RELATIVE_PATH _inc_rel "${CMAKE_CURRENT_SOURCE_DIR}" "${_inc}")
+        if(NOT _inc_rel MATCHES "^\\.\\." AND NOT IS_ABSOLUTE "${_inc_rel}")
+            list(APPEND _generated_include_dirs "${_output_dir}/${_inc_rel}")
+        endif()
+    endforeach()
+
+    set(_generated)
+    foreach(_abs_source IN LISTS _all_sources)
         if(NOT EXISTS "${_abs_source}")
-            message(FATAL_ERROR "CXXE source does not exist: ${_source}")
+            message(FATAL_ERROR "CXXE source does not exist: ${_abs_source}")
         endif()
 
         get_filename_component(_ext "${_abs_source}" LAST_EXT)
-        if(NOT _ext STREQUAL ".cppe")
+        if(NOT _ext STREQUAL ".cppe" AND NOT _ext STREQUAL ".hppe")
             list(APPEND _generated "${_abs_source}")
             continue()
         endif()
@@ -287,9 +324,9 @@ function(cxxe_transform_sources OUT_VAR)
         if(_rel MATCHES "^\\.\\.")
             string(MD5 _hash "${_abs_source}")
             get_filename_component(_base "${_abs_source}" NAME_WE)
-            set(_rel "external/${_hash}/${_base}.cppe")
+            set(_rel "external/${_hash}/${_base}${_ext}")
         endif()
-        string(REGEX REPLACE "\\.cppe$" ".cpp" _rel_cpp "${_rel}")
+        string(REGEX REPLACE "\\.(cpp|hpp)e$" ".\\1" _rel_cpp "${_rel}")
         set(_output "${_output_dir}/${_rel_cpp}")
         get_filename_component(_output_parent "${_output}" DIRECTORY)
 
@@ -308,6 +345,7 @@ function(cxxe_transform_sources OUT_VAR)
     endforeach()
 
     set(${OUT_VAR} "${_generated}" PARENT_SCOPE)
+    set(${OUT_VAR}_INCLUDE_DIRS "${_generated_include_dirs}" PARENT_SCOPE)
 endfunction()
 
 function(_cxxe_split_target_sources out_var args)
@@ -357,8 +395,10 @@ function(cxxe_add_executable target)
         list(APPEND _add_args EXCLUDE_FROM_ALL)
     endif()
     add_executable("${target}" ${_add_args} ${_cxxe_sources})
+    target_include_directories("${target}" BEFORE PRIVATE ${_cxxe_sources_INCLUDE_DIRS})
     target_include_directories("${target}" PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}"
+        ${ARG_INCLUDE_DIRS}
         "${CXXE_STDE_DIR}"
     )
 
@@ -425,8 +465,10 @@ function(cxxe_add_library target)
         list(APPEND _type_args EXCLUDE_FROM_ALL)
     endif()
     add_library("${target}" ${_type_args} ${_cxxe_sources})
+    target_include_directories("${target}" BEFORE PRIVATE ${_cxxe_sources_INCLUDE_DIRS})
     target_include_directories("${target}" PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}"
+        ${ARG_INCLUDE_DIRS}
         "${CXXE_STDE_DIR}"
     )
 

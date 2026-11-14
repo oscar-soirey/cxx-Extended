@@ -31,6 +31,7 @@ int class_has_runtime_features(const IR *ir) {
     size_t i;
     for (i = 0; i < ir->node_count; ++i) {
         const IRNode *n = &ir->nodes[i];
+        if (n->flags & NF_EXTERNAL_DECL) continue;
         if ((n->kind == N_CLASS || n->kind == N_STRUCT || n->kind == N_UNION || n->kind == N_ENUM) && (n->flags & NF_REGISTERED)) return 1;
         if (n->kind == N_GET_MEMBER && (n->flags & NF_GET_MEMBER_RUNTIME)) return 1;
         if (n->kind == N_FUNC_CALL && n->qualified &&
@@ -217,6 +218,7 @@ void emit_registered_classes(const IR *ir, Str *out) {
     for (i = 0; i < ir->node_count; ++i) {
         const IRNode *cls = &ir->nodes[i];
         int64_t c;
+        if (cls->flags & NF_EXTERNAL_DECL) continue;
         if (!((cls->kind == N_CLASS || cls->kind == N_STRUCT || cls->kind == N_UNION || cls->kind == N_ENUM) && (cls->flags & NF_REGISTERED))) continue;
         if (!cls->name || !*cls->name || !cls->qualified || !*cls->qualified)
             die("@register requires a named type");
