@@ -119,6 +119,10 @@ static void parse_call_arguments(Parser *p, int64_t call, size_t a, size_t b) {
                     node_set_value_range(p, an, start, e);
                 }
                 ir_add_child(p->ir, call, an);
+                /* Arguments are full expressions: nested calls (named or not),
+                   property accesses, factories... must be visible too. */
+                if (named) { if (eq + 1 <= e) add_expr_nodes(p, an, eq + 1, e); }
+                else add_expr_nodes(p, an, start, e);
             }
             start = i + 1;
         }
@@ -194,7 +198,7 @@ void add_expr_nodes(Parser *p, int64_t parent, size_t a, size_t b) {
                     continue;
                 }
             }
-            die("CXXE: invalid match statement");
+            ir_die_at(ir, i, "invalid match statement");
         } else if (str_eq(t, "this")) {
             int64_t n = ir_add_node(ir, N_THIS_EXPR, i, i, parent);
             node_set_name(ir, n, "this");
@@ -309,6 +313,7 @@ void add_expr_nodes(Parser *p, int64_t parent, size_t a, size_t b) {
                 int64_t n = ir_add_node(ir, N_INDEX_EXPR, i, close, parent);
                 node_set_value_range(p, n, i, close);
                 ir_add_child(ir, parent, n);
+                if (i + 1 <= close - 1) add_expr_nodes(p, n, i + 1, close - 1);
                 i = close;
             }
         }

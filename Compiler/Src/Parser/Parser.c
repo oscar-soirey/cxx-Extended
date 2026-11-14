@@ -11,6 +11,35 @@
 #include "Lexer/Token.h"
 #include "Parser/ParserInternal.h"
 
+/* End token (inclusive) of the single declaration starting at `a`:
+   - a function definition ends at its body's closing brace;
+   - a class/struct/union/enum, a variable with a braced initializer, an alias
+     or a concept ends at the next top-level ';'. */
+static size_t find_decl_end(Parser *p, size_t a, size_t b) {
+    size_t i = a;
+    int saw_eq = 0, is_type = 0;
+    while (i <= b && (str_eq(pt(p, i), "[[") || str_eq(pt(p, i), "export"))) {
+        if (str_eq(pt(p, i), "[[")) { while (i <= b && !str_eq(pt(p, i), "]]")) i++; }
+        i++;
+    }
+    if (i <= b && (str_eq(pt(p, i), "class") || str_eq(pt(p, i), "struct") ||
+                   str_eq(pt(p, i), "union") || str_eq(pt(p, i), "enum") ||
+                   str_eq(pt(p, i), "using") || str_eq(pt(p, i), "concept"))) is_type = 1;
+    for (; i <= b; ++i) {
+        const char *t = pt(p, i);
+        if (str_eq(t, "(") || str_eq(t, "[")) { size_t c = find_matching(p, i, b + 1); if (c > b) return b; i = c; continue; }
+        if (str_eq(t, "=")) saw_eq = 1;
+        if (str_eq(t, ";")) return i;
+        if (str_eq(t, "{")) {
+            size_t c = find_matching(p, i, b + 1);
+            if (c > b) return b;
+            if (!saw_eq && !is_type) return c;
+            i = c;
+        }
+    }
+    return b;
+}
+
 static void parse_region_items(Parser *p, size_t a, size_t b, int64_t parent, int class_context, const char *class_name) {
     size_t i = a;
     while (i <= b) {
@@ -43,18 +72,16 @@ static void parse_region_items(Parser *p, size_t a, size_t b, int64_t parent, in
         }
 
         if (str_eq(pt(p, i), "template")) {
-            size_t j = i + 1;
-            int depth = 0;
-            while (j <= b) {
-                if (str_eq(pt(p, j), "<")) depth++;
-                else if (str_eq(pt(p, j), ">") && depth) { if (--depth == 0) break; }
-                j++;
-            }
-            if (j <= b) {
-                size_t e = find_stmt_end(p, j + 1, b + 1);
+            size_t j = (i + 1 <= b) ? find_template_close_cpp(p, i + 1, b + 1) : SIZE_MAX;
+            if (j != SIZE_MAX && j < b) {
+                /* The template header only prefixes one declaration: delimit
+                   exactly that declaration and parse it like any other item,
+                   so functions, classes and properties inside templates are
+                   visible to the CXXE passes (named arguments, properties...). */
+                size_t e = find_decl_end(p, j + 1, b);
                 int64_t n = ir_add_node(p->ir, N_TEMPLATE, i, e, parent);
-                node_set_value_range(p, n, i, e);
                 ir_add_child(p->ir, parent, n);
+                parse_region_items(p, j + 1, e, n, class_context, class_name);
                 i = e + 1;
                 continue;
             }
@@ -228,7 +255,10 @@ void parse_source(IR *ir) {
     memset(&p, 0, sizeof(p));
     p.ir = ir;
     p.end = ir->tokens.n ? ir->tokens.n - 1 : 0;
-    root = ir_add_node(ir, N_TRANSLATION_UNIT, 0, p.end, -1);
+    /* The driver may pre-seed the tree with declarations imported from
+       headers under an existing root; parse into it. */
+    if (ir->node_count && ir->nodes[0].kind == N_TRANSLATION_UNIT) root = 0;
+    else root = ir_add_node(ir, N_TRANSLATION_UNIT, 0, p.end, -1);
     p.root = root;
     parse_region_items(&p, 0, p.end ? p.end - 1 : 0, root, 0, NULL);
     while (p.scope_n) scope_pop(&p);

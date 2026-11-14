@@ -50,7 +50,15 @@ void parse_parameters(Parser *p, int64_t fn, size_t a, size_t b) {
             size_t e = (i == b ? i : i - 1);
             if (start <= e) {
                 int64_t pn = ir_add_node(p->ir, N_PARAM_DECL, start, e, fn);
+                size_t q;
+                int pd = 0;
                 infer_decl_name_type(p, start, e, pn);
+                for (q = start; q <= e; ++q) {
+                    const char *qt = pt(p, q);
+                    if (str_eq(qt, "(") || str_eq(qt, "[") || str_eq(qt, "{") || str_eq(qt, "<")) pd++;
+                    else if ((str_eq(qt, ")") || str_eq(qt, "]") || str_eq(qt, "}") || str_eq(qt, ">")) && pd) pd--;
+                    else if (str_eq(qt, "=") && pd == 0) { p->ir->nodes[pn].flags |= NF_PARAM_HAS_DEFAULT; break; }
+                }
                 ir_add_child(p->ir, fn, pn);
             }
             start = i + 1;
