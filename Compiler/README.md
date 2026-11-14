@@ -40,3 +40,26 @@ source .cppe ──► Lexer ──► Parser ──► Frontend (includes) ─�
 Règles : les fonctions utilisées par un seul fichier restent `static` ; chaque
 fonction partagée est déclarée dans l'en-tête de son module. Les includes se
 font depuis `Src/` (`#include "Ir/Ir.h"`). Fichiers et dossiers en PascalCase.
+
+## En-têtes CXXE (`.hppe`)
+
+Un en-tête `.hppe` peut utiliser toutes les fonctionnalités CXXE (propriétés,
+arguments nommés, décorateurs). `cxxe` le traduit en `.hpp`, et tout
+`#include "x.hppe"` est émis comme `#include "x.hpp"`. Les classes, propriétés
+et fonctions déclarées dans les en-têtes inclus sont importées avant l'analyse
+du fichier, donc `obj.prop = v` et `f(b=1, a=2)` fonctionnent entre fichiers.
+`CMake/CXXE.cmake` traduit automatiquement les `.hppe` des sources et des
+`INCLUDE_DIRS`.
+
+## Diagnostics
+
+Les erreurs sont au format `fichier:ligne:colonne: error: ...` (arguments
+nommés inconnus, dupliqués ou manquants, décorateurs invalides). Un appel
+nommé vers une fonction dont aucune déclaration n'est visible est laissé tel
+quel (expression d'affectation C++) avec un avertissement.
+
+## Tests
+
+```sh
+Tests/SelfHost/run.sh            # Linux ou Git Bash (gcc/g++ dans le PATH)
+```
