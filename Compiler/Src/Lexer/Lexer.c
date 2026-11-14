@@ -106,6 +106,7 @@ void lex_cpp(const uint8_t *src, size_t n, TokenVec *out) {
                 }
                 tok_end = j;
                 t.kind = TK_PP;
+                t.byte_end = tok_end;
                 t.text = (char *)xmalloc(tok_end - tok_start + 1);
                 memcpy(t.text, src + tok_start, tok_end - tok_start);
                 t.text[tok_end - tok_start] = 0;
