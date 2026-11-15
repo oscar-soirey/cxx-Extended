@@ -349,6 +349,10 @@ int resolve_property_for_member_ir(const IR *ir, size_t sep_tok, const char *rec
     size_t i;
     Str type;
     if (!receiver || !*receiver || !member || !*member || sep_tok >= ir->tokens.n) return 0;
+    /* Most member accesses are not properties: bail out before any lookup. */
+    for (i = 0; i < ir->node_count; ++i)
+        if (ir->nodes[i].kind == N_PROPERTY && ir->nodes[i].name && !strcmp(ir->nodes[i].name, member)) break;
+    if (i == ir->node_count) return 0;
     fn_id = find_enclosing_callable_ir(ir, sep_tok);
     if (fn_id < 0) return 0;
     if (!strcmp(receiver, "this")) {
