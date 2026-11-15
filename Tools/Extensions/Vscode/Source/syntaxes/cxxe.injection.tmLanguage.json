@@ -1,0 +1,54 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "scopeName": "cxxe.injection",
+  "injectionSelector": "L:source.cxxe -comment -string",
+  "patterns": [
+    { "include": "#decorator-declaration" },
+    { "include": "#decorator" },
+    { "include": "#property" },
+    { "include": "#accessor" },
+    { "include": "#match" },
+    { "include": "#dynamic" }
+  ],
+  "repository": {
+    "decorator-declaration": {
+      "comment": "void @name(params) -> func(int a) { ... }",
+      "match": "(@)([A-Za-z_]\\w*)\\s*(\\([^()]*\\))?\\s*(->)\\s*(func)\\b",
+      "captures": {
+        "1": { "name": "punctuation.definition.decorator.cxxe" },
+        "2": { "name": "entity.name.function.decorator.cxxe" },
+        "4": { "name": "keyword.operator.arrow.cxxe" },
+        "5": { "name": "variable.language.func.cxxe" }
+      }
+    },
+    "decorator": {
+      "comment": "@register, @exposed, @ns::custom<T>(args)",
+      "match": "(@)((?:[A-Za-z_]\\w*::)*[A-Za-z_]\\w*)",
+      "captures": {
+        "1": { "name": "punctuation.definition.decorator.cxxe" },
+        "2": { "name": "entity.name.function.decorator.cxxe" }
+      }
+    },
+    "property": {
+      "comment": "property name { get { ... } set { ... } }",
+      "match": "\\b(property)\\s+([A-Za-z_]\\w*)(?=\\s*(?:\\{|$))",
+      "captures": {
+        "1": { "name": "storage.type.property.cxxe" },
+        "2": { "name": "variable.other.property.cxxe" }
+      }
+    },
+    "accessor": {
+      "match": "\\b(get|set)\\b(?=\\s*\\{)",
+      "name": "storage.modifier.accessor.cxxe"
+    },
+    "match": {
+      "comment": "match value { int: ...; default: ...; }",
+      "match": "\\b(match)\\b(?=\\s+[^;{}()]+\\{)",
+      "name": "keyword.control.match.cxxe"
+    },
+    "dynamic": {
+      "match": "\\bdynamic\\b",
+      "name": "storage.type.dynamic.cxxe"
+    }
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "Property": {
+    "prefix": "property",
+    "description": "Field with native get/set accessors (the property and the field share the name)",
+    "body": [
+      "${1:int} ${2:name}${3: = ${4:0}};",
+      "property ${2:name} {",
+      "\tget { return ${2:name}; }",
+      "\tset { ${2:name} = value; }",
+      "}"
+    ]
+  },
+  "Read-only property": {
+    "prefix": "propget",
+    "description": "Property with a getter only",
+    "body": [
+      "${1:int} ${2:name}${3: = ${4:0}};",
+      "property ${2:name} {",
+      "\tget { return ${2:name}; }",
+      "}"
+    ]
+  },
+  "Custom decorator": {
+    "prefix": "decorator",
+    "description": "Declare a custom decorator wrapping the decorated function",
+    "body": [
+      "${1:void} @${2:name}(${3}) -> func(${4:...}) {",
+      "\t${5:// before}",
+      "\tfunc(${6:...});",
+      "\t${0:// after}",
+      "}"
+    ]
+  },
+  "Registered class": {
+    "prefix": "register",
+    "description": "Class registered in the CXXE runtime factory, with an exposed member",
+    "body": [
+      "@register",
+      "class ${1:Name} {",
+      "public:",
+      "\t@exposed ${2:int} ${3:value} = ${4:0};",
+      "\t$0",
+      "};"
+    ]
+  },
+  "Registered enum": {
+    "prefix": "regenum",
+    "description": "Introspectable enum (stde::enum_to_string / string_to_enum)",
+    "body": [
+      "@register",
+      "enum class ${1:Name} { ${2:First}, ${3:Second} };"
+    ]
+  },
+  "Match": {
+    "prefix": "match",
+    "description": "Type-based dispatch on a dynamic value",
+    "body": [
+      "match ${1:value} {",
+      "\t${2:int}: ${3:statement};",
+      "\tdefault: ${0:statement};",
+      "}"
+    ]
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "C++Extended",
+  "scopeName": "source.cxxe",
+  "comment": "C++Extended is a superset of C++: everything is highlighted by VS Code's C++ grammar; CXXE syntax is added by cxxe.injection.tmLanguage.json, which is injected into every scope of source.cxxe.",
+  "patterns": [
+    { "include": "source.cpp" }
+  ]
+}

@@ -1,0 +1,296 @@
+{
+  "name": "cxxe-vscode",
+  "displayName": "C++Extended Language Support",
+  "description": "C++Extended (.cppe/.hppe) support: full C++ highlighting plus CXXE syntax, live compiler diagnostics, C++ check of the generated code, completion (members, properties, named arguments, decorators), navigation, rename, outline, generated C++ preview, build and run.",
+  "version": "0.3.0",
+  "publisher": "OscarSoirey",
+  "license": "MIT",
+  "icon": "./icon.png",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Snippets",
+    "Other"
+  ],
+  "keywords": [
+    "C++Extended",
+    "CXXE",
+    "cppe",
+    "hppe",
+    "C++",
+    "language server",
+    "LSP"
+  ],
+  "activationEvents": [
+    "onLanguage:cxxe",
+    "workspaceContains:**/*.cppe",
+    "workspaceContains:**/*.hppe"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "cxxe",
+        "aliases": [
+          "C++Extended",
+          "CXXE",
+          "cppextended"
+        ],
+        "extensions": [
+          ".cppe",
+          ".hppe",
+          ".he"
+        ],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icon.png",
+          "dark": "./icon.png"
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "cxxe",
+        "scopeName": "source.cxxe",
+        "path": "./syntaxes/cxxe.tmLanguage.json"
+      },
+      {
+        "scopeName": "cxxe.injection",
+        "path": "./syntaxes/cxxe.injection.tmLanguage.json",
+        "injectTo": [
+          "source.cxxe"
+        ]
+      }
+    ],
+    "snippets": [
+      {
+        "language": "cxxe",
+        "path": "./snippets/cxxe.json"
+      }
+    ],
+    "semanticTokenScopes": [
+      {
+        "language": "cxxe",
+        "scopes": {
+          "decorator": [
+            "entity.name.function.decorator.cxxe"
+          ],
+          "property": [
+            "variable.other.property"
+          ],
+          "parameter": [
+            "variable.parameter"
+          ],
+          "enumMember": [
+            "variable.other.enummember"
+          ]
+        }
+      }
+    ],
+    "configuration": {
+      "title": "C++Extended",
+      "properties": {
+        "cxxe.languageServer.path": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "description": "Path to the cxxe-language-server executable. Empty: the server bundled for this platform, then cxxe-language-server on PATH."
+        },
+        "cxxe.languageServer.logLevel": {
+          "type": "string",
+          "enum": [
+            "silent",
+            "info",
+            "debug"
+          ],
+          "default": "info",
+          "enumDescriptions": [
+            "No log.",
+            "Startup and errors.",
+            "Every JSON-RPC message."
+          ],
+          "description": "Logging level of the C++Extended output channel."
+        },
+        "cxxe.languageServer.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start the language server when a C++Extended file is opened."
+        },
+        "cxxe.compilerPath": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "description": "Path to cxxe (cxxe.exe), used by Build/Run and to find the standard CXXE headers (<cxxe dir>/stde). Empty: cxxe on PATH."
+        },
+        "cxxe.includePaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Additional include directories (like -I), relative to the workspace folder or absolute."
+        },
+        "cxxe.cppCompiler": {
+          "type": "string",
+          "default": "g++",
+          "scope": "machine-overridable",
+          "description": "C++ compiler used to check the generated C++ on save and to run files (g++ or clang++). Empty disables the check."
+        },
+        "cxxe.cppStandard": {
+          "type": "string",
+          "default": "c++20",
+          "enum": [
+            "c++17",
+            "c++20",
+            "c++23"
+          ],
+          "description": "C++ standard of the generated code."
+        },
+        "cxxe.cppCheck": {
+          "type": "string",
+          "enum": [
+            "onSave",
+            "off"
+          ],
+          "default": "onSave",
+          "description": "Compile the generated C++ with -fsyntax-only on save and show its errors in the .cppe file."
+        },
+        "cxxe.build.directory": {
+          "type": "string",
+          "default": "build",
+          "description": "CMake build directory used by 'C++Extended: Build Project (CMake)', relative to the workspace folder."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "cxxe.showGeneratedCpp",
+        "title": "Show Generated C++",
+        "category": "C++Extended",
+        "icon": "$(file-code)"
+      },
+      {
+        "command": "cxxe.runFile",
+        "title": "Run Current File",
+        "category": "C++Extended",
+        "icon": "$(play)"
+      },
+      {
+        "command": "cxxe.buildProject",
+        "title": "Build Project (CMake)",
+        "category": "C++Extended",
+        "icon": "$(tools)"
+      },
+      {
+        "command": "cxxe.restartLanguageServer",
+        "title": "Restart Language Server",
+        "category": "C++Extended"
+      },
+      {
+        "command": "cxxe.setLanguageServerPath",
+        "title": "Set Language Server Path",
+        "category": "C++Extended"
+      },
+      {
+        "command": "cxxe.showOutput",
+        "title": "Show Output",
+        "category": "C++Extended"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "cxxe.showGeneratedCpp",
+          "when": "editorLangId == cxxe",
+          "group": "navigation@1"
+        },
+        {
+          "command": "cxxe.runFile",
+          "when": "editorLangId == cxxe && resourceExtname == .cppe",
+          "group": "navigation@2"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "cxxe.showGeneratedCpp",
+          "when": "editorLangId == cxxe",
+          "group": "navigation@90"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "cxxe.showGeneratedCpp",
+          "when": "editorLangId == cxxe"
+        },
+        {
+          "command": "cxxe.runFile",
+          "when": "editorLangId == cxxe"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "cxxe.runFile",
+        "key": "ctrl+f5",
+        "mac": "cmd+f5",
+        "when": "editorLangId == cxxe && resourceExtname == .cppe"
+      }
+    ],
+    "problemMatchers": [
+      {
+        "name": "cxxe",
+        "owner": "cxxe",
+        "fileLocation": [
+          "autoDetect",
+          "${workspaceFolder}"
+        ],
+        "pattern": {
+          "regexp": "^(.*?):(\\d+):(\\d+):\\s+(?:fatal\\s+)?(warning|error|note):\\s+(.*)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "severity": 4,
+          "message": 5
+        }
+      }
+    ],
+    "configurationDefaults": {
+      "[cxxe]": {
+        "editor.semanticHighlighting.enabled": true,
+        "editor.tokenColorCustomizations": {
+          "textMateRules": [
+            {
+              "scope": [
+                "entity.name.function.decorator.cxxe",
+                "punctuation.definition.decorator.cxxe"
+              ],
+              "settings": {
+                "foreground": "#E3A629",
+                "fontStyle": "bold"
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "files": [
+    "extension.js",
+    "lsp-client.js",
+    "language-configuration.json",
+    "README.md",
+    "LICENSE",
+    "icon.png",
+    "syntaxes/cxxe.tmLanguage.json",
+    "syntaxes/cxxe.injection.tmLanguage.json",
+    "snippets/cxxe.json",
+    "server/README.md",
+    "server/linux-x64/cxxe-language-server",
+    "server/win32-x64/cxxe-language-server.exe",
+    "server/darwin-x64/cxxe-language-server",
+    "server/darwin-arm64/cxxe-language-server"
+  ]
+}
