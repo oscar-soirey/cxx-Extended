@@ -56,7 +56,7 @@ static int parse_property(Parser *p, size_t a, size_t b, int64_t cls, int access
             i++;
         }
         if (!property_has_get(p->ir, &p->ir->nodes[prop]) && !property_has_set(p->ir, &p->ir->nodes[prop]))
-            die("property '%s' must contain at least a get or set block", pt(p, name_i));
+            ir_die_at(p->ir, name_i, "property '%s' must contain at least a get or set block", pt(p, name_i));
         parser_apply_pending(p, prop);
         if (end_out) *end_out = close;
         return 1;
@@ -84,7 +84,7 @@ static void validate_class_properties(const IR *ir, int64_t cls) {
         int64_t field = -1;
         if (prop->kind != N_PROPERTY || !prop->name || !*prop->name) continue;
         if (!find_field_in_class_by_name(ir, cls, prop->name, &field)) {
-            die("CXXE: property '%s' must have a variable with the exact same name in the same type", prop->name);
+            ir_die_at(ir, prop->first_tok, "property '%s' must have a variable with the exact same name in the same type", prop->name);
         }
     }
 }

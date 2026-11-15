@@ -205,8 +205,8 @@ static void emit_custom_decorator_body_external(const IR *ir, const IRNode *cd, 
     if (bc == SIZE_MAX) { tokens_free(&tv); return; }
     if (bc > bo && strcmp(tv.v[bc].text, "}") == 0) bc--;
     dpn = custom_decorator_param_ids(ir, cd, dparams, 64);
-    if (!decorator_invocation_args(ir, dec, dec_starts, dec_ends, 64, &dec_count)) die("CXXE: malformed custom decorator invocation '%s'", dec->name ? dec->name : "<unnamed>");
-    if (dec_count != dpn) die("CXXE: decorator '%s' expects %zu argument(s), got %zu", cd->name ? cd->name : "<unnamed>", dpn, dec_count);
+    if (!decorator_invocation_args(ir, dec, dec_starts, dec_ends, 64, &dec_count)) ir_die_at(ir, dec->first_tok, "malformed custom decorator invocation '%s'", dec->name ? dec->name : "<unnamed>");
+    if (dec_count != dpn) ir_die_at(ir, dec->first_tok, "decorator '%s' expects %zu argument(s), got %zu", cd->name ? cd->name : "<unnamed>", dpn, dec_count);
     tpn = (size_t)custom_decorator_template_param_ids(ir, cd, tparams, 64);
     tac = (size_t)decorator_template_arg_ranges(ir, dec, tstarts, tends, 64);
 
@@ -280,8 +280,8 @@ static void emit_custom_decorator_body(const IR *ir, const IRNode *cd, const IRN
     size_t i;
     if (body_open == SIZE_MAX || body_open >= body_close) return;
     if (body_close > body_open && strcmp(ir->tokens.v[body_close].text, "}") == 0) body_close--;
-    if (!decorator_invocation_args(ir, dec, dec_starts, dec_ends, 64, &dec_count)) die("CXXE: malformed custom decorator invocation '%s'", dec->name ? dec->name : "<unnamed>");
-    if (dec_count != dpn) die("CXXE: decorator '%s' expects %zu argument(s), got %zu", cd->name ? cd->name : "<unnamed>", dpn, dec_count);
+    if (!decorator_invocation_args(ir, dec, dec_starts, dec_ends, 64, &dec_count)) ir_die_at(ir, dec->first_tok, "malformed custom decorator invocation '%s'", dec->name ? dec->name : "<unnamed>");
+    if (dec_count != dpn) ir_die_at(ir, dec->first_tok, "decorator '%s' expects %zu argument(s), got %zu", cd->name ? cd->name : "<unnamed>", dpn, dec_count);
     tpn = (size_t)custom_decorator_template_param_ids(ir, cd, tparams, 64);
     tac = (size_t)decorator_template_arg_ranges(ir, dec, tstarts, tends, 64);
 
@@ -295,7 +295,7 @@ static void emit_custom_decorator_body(const IR *ir, const IRNode *cd, const IRN
                 str_put(out, current_callee);
                 if (custom_decorator_is_variadic(ir, cd)) {
                     size_t close = find_token_matching_paren(ir, i + 1, body_close + 1);
-                    if (close == SIZE_MAX) die("CXXE: malformed func(...) in custom decorator '%s'", cd->name ? cd->name : "<unnamed>");
+                    if (close == SIZE_MAX) ir_die_at(ir, dec->first_tok, "malformed func(...) in custom decorator '%s'", cd->name ? cd->name : "<unnamed>");
                     str_ch(out, '(');
                     emit_actual_function_args(ir, fn, out);
                     str_ch(out, ')');
@@ -361,8 +361,8 @@ void emit_function_with_custom_decorators(const IR *ir, const IRNode *fn, Str *o
     int64_t c;
     size_t body_open = function_body_open(ir, fn);
     size_t name_tok = function_name_token(ir, fn);
-    if (body_open == SIZE_MAX || name_tok == SIZE_MAX) die("CXXE: custom decorators require a function definition with a named function");
-    if (!(fn->kind == N_FUNCTION || fn->kind == N_METHOD)) die("CXXE: custom decorators can only be applied to functions or methods");
+    if (body_open == SIZE_MAX || name_tok == SIZE_MAX) ir_die_at(ir, fn->first_tok, "custom decorators require a function definition with a named function");
+    if (!(fn->kind == N_FUNCTION || fn->kind == N_METHOD)) ir_die_at(ir, fn->first_tok, "custom decorators can only be applied to functions or methods");
     for (c = fn->first_child; c >= 0; c = ir->nodes[c].next_sibling) {
         const IRNode *d = &ir->nodes[c];
         if (d->kind == N_DECORATOR && (d->flags & NF_DECORATOR_CUSTOM)) {
@@ -370,7 +370,7 @@ void emit_function_with_custom_decorators(const IR *ir, const IRNode *fn, Str *o
             custom_count++;
         }
     }
-    if (custom_count > 64) die("CXXE: too many custom decorators on function '%s'", fn->name ? fn->name : "<unnamed>");
+    if (custom_count > 64) ir_die_at(ir, fn->first_tok, "too many custom decorators on function '%s'", fn->name ? fn->name : "<unnamed>");
 
     /* Base implementation: same signature/body, with a private unique name. */
     {

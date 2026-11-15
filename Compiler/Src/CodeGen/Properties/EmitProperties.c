@@ -158,7 +158,7 @@ void emit_property_unary(const IR *ir, const IRNode *node, Str *out) {
         sep = a + 2;
         if (sep >= ir->tokens.n || (strcmp(ir->tokens.v[sep].text,".") && strcmp(ir->tokens.v[sep].text,"->"))) { append_token_bytes(ir,out,a,b); return; }
         if (!property_has_get(ir,prop) || !property_has_set(ir,prop))
-            die("CXXE: property '%s' needs both getter and setter for ++/--",prop->name?prop->name:"<unnamed>");
+            ir_die_at(ir, node->first_tok, "property '%s' needs both getter and setter for ++/--",prop->name?prop->name:"<unnamed>");
         str_put(out,"([&]() { ");
         append_token_bytes(ir,out,a+1,sep-1);
         str_put(out,ir->tokens.v[sep].text); str_put(out,"set_"); str_put(out,prop->name); str_put(out,"(");
@@ -173,7 +173,7 @@ void emit_property_unary(const IR *ir, const IRNode *node, Str *out) {
         sep = b - 2;
         if (sep >= ir->tokens.n || (strcmp(ir->tokens.v[sep].text,".") && strcmp(ir->tokens.v[sep].text,"->"))) { append_token_bytes(ir,out,a,b); return; }
         if (!property_has_get(ir,prop) || !property_has_set(ir,prop))
-            die("CXXE: property '%s' needs both getter and setter for ++/--",prop->name?prop->name:"<unnamed>");
+            ir_die_at(ir, node->first_tok, "property '%s' needs both getter and setter for ++/--",prop->name?prop->name:"<unnamed>");
         str_put(out,"([&]() { auto __cxxe_old = ");
         append_token_bytes(ir,out,a,sep-1);
         str_put(out,ir->tokens.v[sep].text); str_put(out,"get_"); str_put(out,prop->name); str_put(out,"(); ");
@@ -189,14 +189,14 @@ void emit_property_assignment(const IR *ir, const IRNode *node, Str *out) {
     int64_t pid=-1;
     const char *op_text;
     if(!node_is_property_assignment(ir,node,&pid,&op,&sep)){ append_token_bytes(ir,out,a,b); return; }
-    if(!property_has_set(ir,&ir->nodes[pid])) die("CXXE: property '%s' has no setter",ir->nodes[pid].name?ir->nodes[pid].name:"<unnamed>");
+    if(!property_has_set(ir,&ir->nodes[pid])) ir_die_at(ir, node->first_tok, "property '%s' has no setter",ir->nodes[pid].name?ir->nodes[pid].name:"<unnamed>");
     op_text=ir->tokens.v[op].text;
     append_token_bytes(ir,out,a,sep-1);
     str_put(out,ir->tokens.v[sep].text);
     str_put(out,"set_"); str_put(out,ir->nodes[pid].name?ir->nodes[pid].name:"Property"); str_ch(out,'(');
     if(strcmp(op_text,"=")!=0){
         size_t n;
-        if(!property_has_get(ir,&ir->nodes[pid])) die("CXXE: property '%s' needs a getter for compound assignment '%s'",ir->nodes[pid].name?ir->nodes[pid].name:"<unnamed>",op_text);
+        if(!property_has_get(ir,&ir->nodes[pid])) ir_die_at(ir, node->first_tok, "property '%s' needs a getter for compound assignment '%s'",ir->nodes[pid].name?ir->nodes[pid].name:"<unnamed>",op_text);
         append_token_bytes(ir,out,a,sep-1);
         str_put(out,ir->tokens.v[sep].text); str_put(out,"get_"); str_put(out,ir->nodes[pid].name?ir->nodes[pid].name:"Property"); str_put(out,"()");
         n=strlen(op_text); if(n && op_text[n-1]=='=') n--;

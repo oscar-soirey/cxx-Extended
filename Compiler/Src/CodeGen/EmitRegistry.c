@@ -137,7 +137,7 @@ static void emit_registered_member_method(const IR *ir, const IRNode *cls, const
     int64_t params[64];
     size_t pn = function_param_ids(ir, method, params, 64), i;
 
-    if (pn > 64) die("@exposed method '%s' has too many parameters", method->name ? method->name : "<unnamed>");
+    if (pn > 64) ir_die_at(ir, method->first_tok, "@exposed method '%s' has too many parameters", method->name ? method->name : "<unnamed>");
 
     str_put(out, ".expose_method(");
     Str method_name; str_init(&method_name);
@@ -154,7 +154,7 @@ static void emit_registered_member_method(const IR *ir, const IRNode *cls, const
 
     for (i = 0; i < pn; ++i) {
         const IRNode *param = &ir->nodes[params[i]];
-        if (!param->type || !*param->type) die("CXXE: cannot emit runtime wrapper for exposed method parameter '%s'", param->name ? param->name : "<unnamed>");
+        if (!param->type || !*param->type) ir_die_at(ir, param->first_tok, "cannot emit runtime wrapper for exposed method parameter '%s'", param->name ? param->name : "<unnamed>");
         str_put(out, "            using P");
         { char num[32]; snprintf(num, sizeof(num), "%zu", i); str_put(out, num); }
         str_put(out, " = ");
@@ -221,7 +221,7 @@ void emit_registered_classes(const IR *ir, Str *out) {
         if (cls->flags & NF_EXTERNAL_DECL) continue;
         if (!((cls->kind == N_CLASS || cls->kind == N_STRUCT || cls->kind == N_UNION || cls->kind == N_ENUM) && (cls->flags & NF_REGISTERED))) continue;
         if (!cls->name || !*cls->name || !cls->qualified || !*cls->qualified)
-            die("@register requires a named type");
+            ir_die_at(ir, cls->first_tok, "@register requires a named type");
         any = 1;
         if (cls->kind == N_ENUM) { emit_registered_enum(ir, cls, i, out); continue; }
         str_put(out, "        auto cxxe_class_");
@@ -238,7 +238,7 @@ void emit_registered_classes(const IR *ir, Str *out) {
             { char num[32]; snprintf(num, sizeof(num), "%zu", i); str_put(out, num); }
             if (m->kind == N_FIELD_DECL) emit_registered_member_field(cls, m, out);
             else if (m->kind == N_METHOD) emit_registered_member_method(ir, cls, m, out);
-            else die("CXXE: unsupported @exposed member kind");
+            else ir_die_at(ir, cls->first_tok, "unsupported @exposed member kind");
             str_put(out, ";\n");
         }
     }

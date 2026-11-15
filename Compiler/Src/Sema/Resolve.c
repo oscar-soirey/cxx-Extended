@@ -130,7 +130,7 @@ void resolve_native_features(IR *ir) {
             }
         }
         if (!found) {
-            die("unknown decorator '%s'", dkey ? dkey : (d->name ? d->name : "<unnamed>"));
+            ir_die_at(ir, d->first_tok, "unknown decorator '%s'", dkey ? dkey : (d->name ? d->name : "<unnamed>"));
         }
     }
 
@@ -161,10 +161,10 @@ void resolve_native_features(IR *ir) {
                 size_t expected_t = custom_decorator_template_param_count(ir, cd);
                 size_t actual_t = (size_t)decorator_template_arg_ranges(ir, d, NULL, NULL, 0);
                 if (expected_t == 0 && actual_t != 0)
-                    die("custom decorator '%s' is not templated but received %zu template argument(s)",
+                    ir_die_at(ir, d->first_tok, "custom decorator '%s' is not templated but received %zu template argument(s)",
                         d->qualified ? d->qualified : (d->name ? d->name : "<unnamed>"), actual_t);
                 if (expected_t != 0 && actual_t != expected_t)
-                    die("custom decorator '%s' expects %zu template argument(s), got %zu",
+                    ir_die_at(ir, d->first_tok, "custom decorator '%s' expects %zu template argument(s), got %zu",
                         d->qualified ? d->qualified : (d->name ? d->name : "<unnamed>"), expected_t, actual_t);
             }
             for (c = cd->first_child; c >= 0; c = ir->nodes[c].next_sibling) {
@@ -181,7 +181,7 @@ void resolve_native_features(IR *ir) {
             for (c = fn->first_child; c >= 0; c = ir->nodes[c].next_sibling)
                 if (ir->nodes[c].kind == N_PARAM_DECL) fn_count++;
             if (target_count != fn_count)
-                die("custom decorator '%s' expects %zu function parameter(s), but decorated function '%s' has %zu",
+                ir_die_at(ir, d->first_tok, "custom decorator '%s' expects %zu function parameter(s), but decorated function '%s' has %zu",
                     d->qualified ? d->qualified : (d->name ? d->name : "<unnamed>"),
                     target_count, fn->name ? fn->name : "<unnamed>", fn_count);
             {
@@ -204,7 +204,7 @@ void resolve_native_features(IR *ir) {
                             if (!isspace((unsigned char)fb[x])) b_type[y++] = fb[x];
                         b_type[y] = 0;
                         if (strcmp(a_type, b_type) != 0)
-                            die("custom decorator '%s' expects parameter %zu of type '%s', but decorated function '%s' has type '%s'",
+                            ir_die_at(ir, d->first_tok, "custom decorator '%s' expects parameter %zu of type '%s', but decorated function '%s' has type '%s'",
                                 d->qualified ? d->qualified : (d->name ? d->name : "<unnamed>"),
                                 ti + 1, ta[0] ? ta : "<unknown>",
                                 fn->name ? fn->name : "<unnamed>", fb[0] ? fb : "<unknown>");
@@ -251,7 +251,7 @@ int resolve_named_args(IR *ir) {
     for (i = 0; i < ir->node_count; ++i) {
         IRNode *call = &ir->nodes[i];
         size_t f;
-        if (call->kind != N_FUNC_CALL) continue;
+        if (call->kind != N_FUNC_CALL || !node_is_named_call(ir, (int64_t)i)) continue;
         for (f = 0; f < ir->node_count; ++f) {
             IRNode *fn = &ir->nodes[f];
             int matches = 0;

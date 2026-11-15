@@ -30,9 +30,9 @@ void emit_match_statement(const IR *ir, const IRNode *node, Str *out) {
     size_t candidate;
     int par=0, br=0, cur=0, angle=0;
     const char *subject_name;
-    if (brace==SIZE_MAX || brace<=a+1 || brace>=close) die("CXXE: invalid match statement");
+    if (brace==SIZE_MAX || brace<=a+1 || brace>=close) ir_die_at(ir, node->first_tok, "invalid match statement");
     subject_b=brace-1;
-    if (subject_a!=subject_b || ir->tokens.v[subject_a].kind!=TK_IDENTIFIER) die("CXXE: match currently requires a simple variable as its value");
+    if (subject_a!=subject_b || ir->tokens.v[subject_a].kind!=TK_IDENTIFIER) ir_die_at(ir, node->first_tok, "match currently requires a simple variable as its value");
     subject_name=ir->tokens.v[subject_a].text;
     candidate=brace+1;
     for (i=brace+1;i<close;++i) {
@@ -47,11 +47,11 @@ void emit_match_statement(const IR *ir, const IRNode *node, Str *out) {
         else if (!strcmp(t,">")&&angle) angle--;
         else if (!strcmp(t,";")&&!par&&!br&&!cur&&!angle) candidate=i+1;
         else if (!strcmp(t,":")&&!par&&!br&&!cur&&!angle&&candidate<i&&match_pattern_is_type(ir,candidate,i-1)) {
-            if (labels>=128) die("CXXE: too many match cases");
+            if (labels>=128) ir_die_at(ir, node->first_tok, "too many match cases");
             label_start[labels]=candidate; label_colon[labels]=i; labels++; candidate=i+1;
         }
     }
-    if (!labels) die("CXXE: match must contain at least one case");
+    if (!labels) ir_die_at(ir, node->first_tok, "match must contain at least one case");
     str_put(out,"{ auto&& __cxxe_match_value = ("); append_token_bytes(ir,out,subject_a,subject_b); str_put(out,");\n");
     for (i=0;i<labels;++i) {
         size_t body_a=label_colon[i]+1, body_b=(i+1<labels?label_start[i+1]-1:close-1);

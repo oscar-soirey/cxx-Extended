@@ -204,7 +204,8 @@ static void import_declarations(IR *dst, const IR *src) {
     }
 }
 
-static void discover_one_include(IR *dst, const char *current_file, const char *raw, IncludeContext *ctx, IRNode *include_node) {
+static void discover_one_include(IR *dst, const char *current_file, const char *raw, IncludeContext *ctx, IRNode *include_node,
+                                 const IR *loc_ir, uint64_t loc_tok) {
     char *name = NULL, *resolved = NULL;
     int angled = 0, next = 0;
     IR hdr;
@@ -212,7 +213,10 @@ static void discover_one_include(IR *dst, const char *current_file, const char *
     (void)next;
     resolved = resolve_include_path0(current_file, name, angled, ctx);
     if (!resolved) {
-        if (!angled) die("cannot resolve include \"%s\" included from '%s'", name ? name : "", current_file);
+        if (!angled) {
+            if (loc_ir) ir_die_at(loc_ir, loc_tok, "cannot find include file \"%s\"", name ? name : "");
+            die("cannot resolve include \"%s\" included from '%s'", name ? name : "", current_file);
+        }
         free(name);
         return; /* system/SDK angle include: intentionally opaque to CXXE */
     }
@@ -222,6 +226,7 @@ static void discover_one_include(IR *dst, const char *current_file, const char *
     include_mark_visited(ctx, resolved);
     if (!header_extension_candidate0(resolved)) { free(resolved); return; }
     ir_init(&hdr);
+    hdr.path = xstrdup0(resolved);
     hdr.source = read_bytes(resolved, &hdr.source_size);
     lex_cpp(hdr.source, hdr.source_size, &hdr.tokens);
     parse_source(&hdr);
@@ -236,7 +241,7 @@ static void discover_includes_recursive(IR *dst, const char *current_file, Inclu
     for (i = 0; i < dst->node_count; ++i) {
         const IRNode *n = &dst->nodes[i];
         if ((n->kind != N_INCLUDE && n->kind != N_IMPORT) || !n->value) continue;
-        discover_one_include(dst, current_file, n->value, ctx, (IRNode *)n);
+        discover_one_include(dst, current_file, n->value, ctx, (IRNode *)n, dst, n->first_tok);
     }
 }
 
@@ -261,7 +266,7 @@ size_t import_included_declarations(IR *dst, const IR *scan, const char *main_pa
     for (i = 0; i < scan->node_count; ++i) {
         const IRNode *n = &scan->nodes[i];
         if ((n->kind != N_INCLUDE && n->kind != N_IMPORT) || !n->value) continue;
-        discover_one_include(dst, main_path, n->value, &ctx, NULL);
+        discover_one_include(dst, main_path, n->value, &ctx, NULL, scan, n->first_tok);
     }
     include_ctx_free(&ctx);
     return dst->node_count - before;
@@ -289,4 +294,26 @@ void discover_included_decorators(IR *ir, const char *main_path, const char *con
     }
     discover_includes_recursive(ir, main_path, &ctx);
     include_ctx_free(&ctx);
+}
+
+/* Resolves an include directive's text (`#include "x"` or `<x>`) as the
+   compiler does. Returns a malloc'd path or NULL. */
+char *cxxe_resolve_include(const char *current_file, const char *directive,
+                           const char *const *include_dirs, size_t include_dir_n) {
+    IncludeContext ctx;
+    char *name = NULL, *resolved = NULL;
+    int angled = 0, next = 0;
+    size_t i;
+    if (!parse_include_spec0(directive, &name, &angled, &next)) return NULL;
+    memset(&ctx, 0, sizeof(ctx));
+    for (i = 0; i < include_dir_n; ++i) include_add_dir(&ctx, include_dirs[i]);
+    if (g_cxxe_executable_dir) {
+        char *stde_dir = path_join0(g_cxxe_executable_dir, "stde");
+        include_add_dir(&ctx, stde_dir);
+        free(stde_dir);
+    }
+    resolved = resolve_include_path0(current_file, name, angled, &ctx);
+    free(name);
+    include_ctx_free(&ctx);
+    return resolved;
 }

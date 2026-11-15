@@ -11,28 +11,24 @@
 
 void ir_init(IR *ir) { memset(ir, 0, sizeof(*ir)); }
 
-static void ir_report(const IR *ir, uint64_t tok, const char *level, const char *fmt, va_list ap) {
-    const char *path = (ir && ir->path) ? ir->path : "<input>";
-    if (ir && tok < ir->tokens.n)
-        fprintf(stderr, "%s:%u:%u: %s: ", path, ir->tokens.v[tok].line, ir->tokens.v[tok].column, level);
-    else
-        fprintf(stderr, "%s: %s: ", path, level);
-    vfprintf(stderr, fmt, ap);
-    fputc('\n', stderr);
+static void ir_report(const IR *ir, uint64_t tok, int severity, const char *fmt, va_list ap) {
+    unsigned line = 0, col = 0;
+    if (ir && tok < ir->tokens.n) { line = ir->tokens.v[tok].line; col = ir->tokens.v[tok].column; }
+    cxxe_diagnostic(severity, ir ? ir->path : NULL, line, col, fmt, ap);
 }
 
 void ir_die_at(const IR *ir, uint64_t tok, const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
-    ir_report(ir, tok, "error", fmt, ap);
+    ir_report(ir, tok, CXXE_DIAG_ERROR, fmt, ap);
     va_end(ap);
-    exit(1);
+    exit(1); /* not reached */
 }
 
 void ir_warn_at(const IR *ir, uint64_t tok, const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
-    ir_report(ir, tok, "warning", fmt, ap);
+    ir_report(ir, tok, CXXE_DIAG_WARNING, fmt, ap);
     va_end(ap);
 }
 
