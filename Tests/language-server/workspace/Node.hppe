@@ -1,0 +1,22 @@
+#pragma once
+#include <string>
+
+namespace Engine {
+class Node {
+public:
+    Node(std::string label, int start_depth = 0) : name(label), depth(start_depth) {}
+    std::string name;
+    int depth = 0;
+    property depth {
+        get { return depth; }
+        set { depth = value < 0 ? 0 : value; }
+    }
+    int bump(int by, int times);
+};
+}
+
+int make(int kind, int line, int col = 0);
+
+void @trace() -> func(int value) {
+    func(value);
+}

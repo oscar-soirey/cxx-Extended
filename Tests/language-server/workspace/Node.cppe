@@ -1,0 +1,12 @@
+#include "Node.hppe"
+
+namespace Engine {
+int Node::bump(int by, int times) {
+    depth = depth + by * times;
+    return depth;
+}
+}
+
+int make(int kind, int line, int col) {
+    return kind * 10 + line + col;
+}

@@ -1,0 +1,22 @@
+#include "Node.hppe"
+#include <vector>
+
+@register
+enum class Color { Red, Green, Blue };
+
+@trace
+void work(int value) {
+    (void)value;
+}
+
+int main() {
+    Engine::Node n("root", start_depth=2);
+    n.depth = -3;
+    int m = make(line=2, kind=1);
+    std::vector<Engine::Node> nodes;
+    nodes.push_back(n);
+    nodes[0].depth = 4;
+    auto total = n.bump(times=2, by=3) + m;
+    work(total);
+    return n.depth;
+}
