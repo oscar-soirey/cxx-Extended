@@ -121,12 +121,52 @@ void emit_native_token_range(const IR *ir, Str *out, size_t begin_tok, size_t en
     free(native_ids);
 }
 
-static void emit_cpp(const IR *ir, const char *path) {
+/* Keeps generated line numbers aligned with the .cppe source: whenever a
+   CXXE construct expands to a different number of lines, a #line directive
+   restores the mapping, so C++ compiler errors point into the .cppe file. */
+typedef struct {
+    const IR *ir;
+    size_t src_scanned, src_lines;  /* newlines in source[0..src_scanned) */
+    size_t out_scanned, out_lines;  /* newlines in out[0..out_scanned) */
+    long bias;                      /* expected out_lines - src_lines */
+} LineSync;
+
+static void put_line_directive(LineSync *ls, Str *out, size_t line) {
+    const char *p;
+    char num[32];
+    if (out->len && out->data[out->len - 1] != '\n') str_ch(out, '\n');
+    snprintf(num, sizeof(num), "#line %zu \"", line);
+    str_put(out, num);
+    for (p = ls->ir->path; *p; ++p) {
+        if (*p == '\\' || *p == '"') str_ch(out, '\\');
+        str_ch(out, *p);
+    }
+    str_put(out, "\"\n");
+}
+
+static void line_sync(LineSync *ls, Str *out, size_t src_pos) {
+    if (!ls->ir->path) return;
+    while (ls->src_scanned < src_pos && ls->src_scanned < ls->ir->source_size)
+        if (ls->ir->source[ls->src_scanned++] == '\n') ls->src_lines++;
+    while (ls->out_scanned < out->len)
+        if (out->data[ls->out_scanned++] == '\n') ls->out_lines++;
+    if ((long)ls->out_lines - (long)ls->src_lines == ls->bias) return;
+    put_line_directive(ls, out, ls->src_lines + 1);
+    while (ls->out_scanned < out->len)
+        if (out->data[ls->out_scanned++] == '\n') ls->out_lines++;
+    /* The directive's next line is source line src_lines + 1. */
+    ls->bias = (long)ls->out_lines - (long)ls->src_lines;
+}
+
+void emit_cpp_to_str(const IR *ir, Str *result) {
     Str out;
     size_t cursor = 0, i, native_count = 0;
     size_t *native_ids = NULL;
     int runtime_features = class_has_runtime_features(ir);
+    LineSync ls;
     str_init(&out);
+    memset(&ls, 0, sizeof(ls));
+    ls.ir = ir;
 
     /* Native nodes are created by several parser passes. In particular,
        property-assignment nodes are intentionally discovered before generic
@@ -155,6 +195,7 @@ static void emit_cpp(const IR *ir, const char *path) {
     }
     if (runtime_features) {
         str_put(&out, "#include \"cxxe_runtime.hpp\"\nnamespace cxxe_generated { static void register_all(); }\n");
+        line_sync(&ls, &out, 0);
     }
     for (i = 0; i < native_count; ++i) {
         const IRNode *n = &ir->nodes[native_ids[i]];
@@ -198,15 +239,18 @@ static void emit_cpp(const IR *ir, const char *path) {
             else if (node_is_factory_runtime_call(n)) emit_factory_runtime(ir, n, &out);
             else emit_named_call(ir, n, &out);
             cursor = (size_t)be;
+            line_sync(&ls, &out, cursor);
         }
     }
     if (cursor < ir->source_size) emit_source_range_with_properties(ir, &out, cursor, (uint64_t)ir->source_size);
     if (runtime_features) emit_registered_classes(ir, &out);
-    write_bytes(path, out.data ? out.data : "", out.len);
     free(native_ids);
-    str_free(&out);
+    *result = out;
 }
 
 void emit_exact(const IR *ir, const char *path) {
-    emit_cpp(ir, path);
+    Str out;
+    emit_cpp_to_str(ir, &out);
+    write_bytes(path, out.data ? out.data : "", out.len);
+    str_free(&out);
 }

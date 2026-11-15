@@ -120,7 +120,9 @@ int main(int argc, char **argv) {
         build_ir_from_cpp(&ir, argv[argi], include_dirs, include_dir_n);
         save_ir(&ir, ".cxxe.tmp.cpir");
         {
-            IR reloaded; ir_init(&reloaded); load_ir(&reloaded, ".cxxe.tmp.cpir"); emit_exact(&reloaded, argv[argi + 1]); ir_free(&reloaded);
+            IR reloaded; ir_init(&reloaded); load_ir(&reloaded, ".cxxe.tmp.cpir");
+            reloaded.path = xstrdup0(argv[argi]); /* enables #line mapping to the source */
+            emit_exact(&reloaded, argv[argi + 1]); ir_free(&reloaded);
         }
         remove(".cxxe.tmp.cpir"); ir_free(&ir);
         printf("cxxe: round-trip %s -> %s\n", argv[argi], argv[argi + 1]);

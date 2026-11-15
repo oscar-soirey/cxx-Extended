@@ -15,9 +15,17 @@
 #include "Sema/Resolve.h"
 
 void build_ir_from_cpp(IR *ir, const char *path, const char *const *include_dirs, size_t include_dir_n) {
+    size_t size = 0;
+    uint8_t *bytes = read_bytes(path, &size);
+    build_ir_from_memory(ir, path, bytes, size, include_dirs, include_dir_n);
+}
+
+void build_ir_from_memory(IR *ir, const char *path, uint8_t *source, size_t size,
+                          const char *const *include_dirs, size_t include_dir_n) {
     ir_init(ir);
     ir->path = xstrdup0(path);
-    ir->source = read_bytes(path, &ir->source_size);
+    ir->source = source;
+    ir->source_size = size;
     lex_cpp(ir->source, ir->source_size, &ir->tokens);
     parse_source(ir);
     {
