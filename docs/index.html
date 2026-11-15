@@ -153,6 +153,10 @@
     <a href="#repository">Source Code</a>
     <a href="#status">Feature Status</a>
     <a href="#compatibility">C++ Compatibility</a>
+    <a href="#cli">Command Line (cxxe)</a>
+    <a href="#build">Building the Compiler</a>
+    <a href="#pipeline">How cxxe Works</a>
+    <a href="#headers">CXXE Headers (.hppe)</a>
     <a href="#parameters">Named Parameters</a>
     <a href="#decorators">Native Decorators</a>
     <a href="#custom">Custom decorators</a>
@@ -163,7 +167,12 @@
     <a href="#properties">Properties</a>
     <a href="#ioutput">Output Redirection (IOutput)</a>
     <a href="#cmake">CMake Toolchain</a>
+    <a href="#runtime">Runtime Library (std)</a>
+    <a href="#stdlib">Standard Library</a>
+    <a href="#diagnostics">Diagnostics</a>
+    <a href="#language-server">Language Server</a>
     <a href="#concepts">Concepts</a>
+    <a href="#resources">Resources</a>
     <a href="#notes">Notes and Limitations</a>
   </nav>
 </aside>
@@ -206,15 +215,94 @@
     <tr><td>Properties (<code>property</code>)</td><td>Available</td></tr>
     <tr><td>Output Redirection (<code>IOutput</code>)</td><td>Available</td></tr>
     <tr><td>CMake Toolchain</td><td>Available</td></tr>
+    <tr><td>Command-line converter (<code>cxxe parse / emit / roundtrip / dump</code>)</td><td>Available</td></tr>
+    <tr><td>Embedded runtime (<code>cxxe runtime export / header / source</code>)</td><td>Available</td></tr>
+    <tr><td>CXXE headers (<code>.hppe</code>) and cross-file imports</td><td>Available</td></tr>
+    <tr><td>Language Server (<code>cxxe-language-server</code>, LSP)</td><td>Available</td></tr>
+    <tr><td>IDE extensions (VS Code, Visual Studio, CLion, …)</td><td>Planned</td></tr>
     <tr><td>Decorator templates</td><td>Planned</td></tr>
     <tr><td>Type <code>dynamic</code></td><td>Testing Phase</td></tr>
     <tr><td>Pattern matching (<code>match</code>)</td><td>Testing Phase</td></tr>
     <tr><td>JSON / XML / other formats</td><td>Concept</td></tr>
     <tr><td>Automatic serialization (<code>@serializable</code>)</td><td>Concept</td></tr>
+    <tr><td>Null safety (<code>player?-&gt;update()</code>)</td><td>Concept</td></tr>
+    <tr><td>Standard library: <code>&lt;ioutput&gt;</code></td><td>Available</td></tr>
+    <tr><td>Standard library: <code>&lt;dynamic_list&gt;</code></td><td>Concept</td></tr>
   </table>
 
   <h2 id="compatibility">C++ Compatibility</h2>
   <p>C++Extended is a <strong>superset</strong> of C++: any valid C++ code is also valid C++Extended code. An existing project can therefore be migrated file by file.</p>
+  <p>Extended sources use the <code>.cppe</code> extension; extended headers use <code>.hppe</code>. Plain <code>.cpp</code> / <code>.hpp</code> files pass through untouched, so both kinds can live in the same project.</p>
+
+  <h2 id="cli">Command Line (cxxe)</h2>
+  <p>The compiler is a stand-alone executable. It lexes and parses your code itself (it does <strong>not</strong> call clang, LLVM or any C++ compiler), stores it in an intermediate representation called <strong>CPIR</strong>, and generates standard C++ from it.</p>
+<pre><code>cxxe [options] &lt;command&gt; [arguments]</code></pre>
+  <h3>Commands</h3>
+  <table>
+    <tr><th>Command</th><th>Description</th></tr>
+    <tr><td><code>parse &lt;input&gt; &lt;output.cpir&gt;</code></td><td>Parses a source file into CPIR and prints the number of nodes and tokens.</td></tr>
+    <tr><td><code>emit &lt;input.cpir&gt; &lt;output.cpp&gt;</code></td><td>Generates C++ from a CPIR file.</td></tr>
+    <tr><td><code>roundtrip &lt;input&gt; &lt;output.cpp&gt;</code></td><td>Parses then generates C++ in one step (this is what the CMake toolchain uses). The temporary CPIR file <code>.cxxe.tmp.cpir</code> is removed afterwards.</td></tr>
+    <tr><td><code>dump &lt;input.cpir&gt;</code></td><td>Displays the contents of a CPIR file (useful for debugging the compiler).</td></tr>
+    <tr><td><code>runtime export &lt;directory&gt;</code></td><td>Writes <code>cxxe_runtime.hpp</code> and <code>cxxe_runtime.cpp</code> into the directory (created if needed).</td></tr>
+    <tr><td><code>runtime header &lt;output.hpp|-&gt;</code></td><td>Writes only the runtime header. Use <code>-</code> to print to stdout.</td></tr>
+    <tr><td><code>runtime source &lt;output.cpp|-&gt;</code></td><td>Writes only the runtime source. Use <code>-</code> to print to stdout.</td></tr>
+  </table>
+  <h3>Options</h3>
+  <table>
+    <tr><th>Option</th><th>Description</th></tr>
+    <tr><td><code>-h</code>, <code>--help</code></td><td>Shows the help message.</td></tr>
+    <tr><td><code>-v</code>, <code>--version</code></td><td>Shows the version (<code>CXXE 0.1</code>).</td></tr>
+    <tr><td><code>-I &lt;dir&gt;</code> or <code>-I&lt;dir&gt;</code></td><td>Adds an include search directory. May be repeated.</td></tr>
+  </table>
+  <p>Options must come <strong>before</strong> the command. Usage errors (unknown option, wrong number of arguments, unknown command) exit with code <code>2</code>.</p>
+<pre><code>cxxe parse main.cppe main.cpir
+cxxe emit main.cpir main.cpp
+cxxe -I include roundtrip main.cppe generated.cpp
+cxxe dump main.cpir
+cxxe runtime export ./runtime</code></pre>
+
+  <h2 id="build">Building the Compiler</h2>
+  <p><code>cxxe</code> is written in C11 with no external dependency. Two build scripts are provided in the <code>Compiler/</code> folder.</p>
+<pre><code>:: Windows (MinGW gcc) - produces cxxe.exe at the repository root
+Compiler\Build.bat
+
+# Any platform with CMake
+cmake -S Compiler -B Compiler/build
+cmake --build Compiler/build</code></pre>
+  <p><code>Build.bat</code> accepts an optional output path as its first argument. Self-hosting tests are run with <code>Tests/SelfHost/run.sh</code> (Linux or Git Bash, with <code>gcc</code>/<code>g++</code> in the <code>PATH</code>).</p>
+
+  <h2 id="pipeline">How cxxe Works</h2>
+<pre><code>.cppe source -&gt; Lexer -&gt; Parser -&gt; Frontend (includes) -&gt; Sema -&gt; CodeGen -&gt; .cpp
+                              |                                  |
+                              +---------- Ir (CPIR) &lt;------------+--&gt; IrSerialize (.cpir)</code></pre>
+  <p>The lexer keeps a <strong>lossless</strong> token stream (every byte, including whitespace and comments), so unknown constructs survive the round trip unchanged. The generated C++ is byte-for-byte identical to the input for any code that does not use an extension.</p>
+  <table>
+    <tr><th>Module (<code>Src/</code>)</th><th>Role</th></tr>
+    <tr><td><code>Core/</code></td><td>Common includes, memory and diagnostics, string buffer, file I/O, paths and the executable directory.</td></tr>
+    <tr><td><code>Lexer/</code></td><td>Lossless token model and the C++/CXXE lexer.</td></tr>
+    <tr><td><code>Ir/</code></td><td>CPIR tree, binary <code>.cpir</code> format (<code>IrSerialize</code>) and the <code>dump</code> command (<code>IrDump</code>).</td></tr>
+    <tr><td><code>Parser/</code></td><td>Tokens to IR: decorators, custom decorators, expressions, declarations, preprocessor, classes and properties.</td></tr>
+    <tr><td><code>Frontend/</code></td><td>Resolves <code>#include</code> and imports the declarations of included headers (including the <code>std</code> headers).</td></tr>
+    <tr><td><code>Sema/</code></td><td>Type and property lookup, native feature resolution, named-argument binding and checks.</td></tr>
+    <tr><td><code>CodeGen/</code></td><td>C++ generation: named calls, runtime registry, decorators, properties, <code>match</code>, source emission.</td></tr>
+    <tr><td><code>Runtime/</code></td><td>Embedded runtime sources and the <code>cxxe runtime</code> command.</td></tr>
+    <tr><td><code>Driver/</code></td><td>Chains the stages (<code>build_ir_from_cpp</code>).</td></tr>
+    <tr><td><code>Cli/</code></td><td>Help text, error reporting and <code>main</code>.</td></tr>
+  </table>
+  <p>Properties, constructors and named arguments are recognized <em>while parsing</em>, so declarations from included CXXE headers must be known first. <code>cxxe</code> therefore parses once to discover includes and, if they contribute declarations, parses again with them pre-loaded.</p>
+
+  <h2 id="headers">CXXE Headers (.hppe) and Includes</h2>
+  <p>A <code>.hppe</code> header can use <strong>every</strong> CXXE feature (properties, named arguments, decorators). <code>cxxe</code> translates it to a <code>.hpp</code>, and every <code>#include "x.hppe"</code> is emitted as <code>#include "x.hpp"</code>.</p>
+  <p>Classes, properties, functions and custom decorators declared in included headers are imported before the file is analyzed, so <code>obj.prop = v</code>, <code>f(b=1, a=2)</code> and custom decorators work <strong>across files</strong>.</p>
+  <h3>Include resolution</h3>
+  <ul>
+    <li><code>#include "file"</code>: searched relative to the including file, then in each <code>-I</code> directory. An unresolvable quoted include is an error.</li>
+    <li><code>#include &lt;file&gt;</code>: searched in each <code>-I</code> directory, then in the including file's directory. Unresolved angle includes are assumed to be system headers and are left alone.</li>
+    <li><code>#include_next</code> and <code>#import</code> are understood; includes built from macros cannot be resolved.</li>
+    <li>Recognized header extensions: <code>.h</code>, <code>.hpp</code>, <code>.he</code>, <code>.hppe</code>, <code>.hh</code>, <code>.hxx</code>, <code>.inl</code>, <code>.inc</code>.</li>
+    <li>The CXXE standard headers live in the <code>std</code> folder next to <code>cxxe.exe</code> and are found automatically, with no <code>-I</code> needed.</li>
+  </ul>
 
   <h2 id="parameters">Named Parameters</h2>
   <p>Arguments can be passed by name, in any order.</p>
@@ -223,6 +311,11 @@
 int main() {
     int r = add(b=5, a=4);
 }</code></pre>
+  <p>The compiler reorders the arguments to match the declaration and emits a normal call (<code>add(4, 5)</code>). Named calls are resolved against the declarations visible in the file <em>and</em> in its included headers, and nested named calls are supported.</p>
+  <ul>
+    <li>An unknown, duplicated or missing argument name is a compile-time error.</li>
+    <li>If no declaration of the function is visible, the call is left untouched (it is then a plain C++ assignment expression) and a <strong>warning</strong> is printed.</li>
+  </ul>
 
   <h2 id="decorators">Native Decorators and Reflection</h2>
   <p>Native decorators allow classes to be registered and members to be exposed so they can be accessed <strong>at runtime</strong> by name.</p>
@@ -231,6 +324,12 @@ int main() {
     <tr><td><code>@register</code></td><td>Registers the class in the factory.</td></tr>
     <tr><td><code>@exposed</code></td><td>Exposes a member to reflection. It must be <code>public</code>.</td></tr>
   </table>
+  <ul>
+    <li><code>@register</code> applies to a named <code>class</code>, <code>struct</code>, <code>union</code> or <code>enum</code>.</li>
+    <li><code>@exposed</code> applies to a <strong>public member variable</strong> or a <strong>public method</strong> (up to 64 parameters).</li>
+    <li>Registration is automatic: <code>cxxe</code> generates a <code>cxxe_generated::register_all()</code> function and a static object that calls it at program start-up.</li>
+    <li>A registered class must be default-constructible to be created through the factory.</li>
+  </ul>
 <pre><code>@register
 class A {
 public:
@@ -239,20 +338,31 @@ public:
 
   <h3>Creating Instances</h3>
 <pre><code>// Instantiate by name
-A* obj = stde::factory_new("A");
-// transformed by cxxe into: new A()
+A* obj = std::factory_new("A");
 
-// Get the type by name
-A* obj2 = new stde::factory_find("A")();
-// transformed by cxxe into: new A()</code></pre>
+// Same thing, with a "new" syntax
+A* obj2 = new std::factory_find("A")();</code></pre>
+  <p>Both forms are <strong>runtime</strong> lookups in the class registry; <code>cxxe</code> never replaces the name by the type at compile time. <code>new std::factory_find("A")()</code> is rewritten into <code>std::factory_new("A")</code>, and both are wrapped so the registry is initialized first (<code>(cxxe_generated::register_all(), std::factory_new("A"))</code>). The result converts to <code>A*</code>, and throws if the class is not registered or the type does not match.</p>
 
   <h3>Accessing Exposed Members</h3>
-<pre><code>obj->get_member("health") = 4;
-// transformed by cxxe into: obj->health = 4;</code></pre>
+<pre><code>obj->get_member("health") = 4;</code></pre>
+  <p><code>get_member</code> is always a <strong>runtime</strong> intrinsic, even with a string literal. <code>cxxe</code> rewrites it into <code>std::get_member(obj, "health")</code> (preceded by the registry initialization), which looks the member up by name when the line executes. It is not turned into <code>obj->health</code>.</p>
+  <p>Exposed <strong>methods</strong> can be called the same way. The call goes through the runtime registry and returns a <code>std::DynamicValue</code>:</p>
+<pre><code>@register
+class Player {
+public:
+    @exposed int health;
+    @exposed void heal(int amount) { health += amount; }
+};
+
+Player p;
+std::get_member(p, "heal")(10);               // runtime call
+int h = std::get_member(p, "health");         // runtime read</code></pre>
+  <p>Reading or writing an exposed member that does not exist, is not registered, or is of the wrong kind (field vs. method) throws a <code>std::runtime_error</code>.</p>
 
   <h3>Dynamic Usage</h3>
   <p>Everything is resolved <strong>at runtime</strong>: the name can come from a source unknown at compile time.</p>
-<pre><code>stde::factory_new(unknown_string);</code></pre>
+<pre><code>std::factory_new(unknown_string);</code></pre>
   <div class="note">An <code>@exposed</code> member must be <code>public</code>.</div>
 
   <h2 id="custom">Custom decorators</h2>
@@ -271,6 +381,31 @@ A* obj2 = new stde::factory_find("A")();
   <p>Usage:</p>
 <pre><code>@my_decorator
 void work(int a) { /* ... */ }</code></pre>
+  <p>Use <code>func(...)</code> instead of a parameter list to make the decorator accept <strong>any</strong> function signature:</p>
+<pre><code>void @log() -> func(...) {
+    std::cout &lt;&lt; "call" &lt;&lt; std::endl;
+    func(...);
+}</code></pre>
+  <h3>Templates and namespaces</h3>
+<pre><code>namespace dec {
+    template&lt;typename T&gt;
+    void @my_decorator(T a) -> func(...) {
+        std::cout &lt;&lt; "before" &lt;&lt; a &lt;&lt; std::endl;
+        func(...);
+    }
+}
+
+@dec::my_decorator&lt;int&gt;(10)
+void Show(const char* a) { std::cout &lt;&lt; a &lt;&lt; std::endl; }</code></pre>
+  <p>Decorator names are resolved from the innermost scope outward (<code>A::B::dec</code>, then <code>A::dec</code>, then <code>dec</code>). Several decorators can be stacked on the same function (up to 64).</p>
+  <h3>Rules</h3>
+  <ul>
+    <li>Custom decorators apply to <strong>functions and methods with a body</strong> only.</li>
+    <li>The number of decorator arguments must match the decorator's parameters, and the number of template arguments must match its template parameters.</li>
+    <li>With an explicit <code>func(int a)</code> target, the decorated function must have the same number and types of parameters.</li>
+    <li>Using a decorator that is neither native nor declared is a compile-time error (<code>unknown decorator</code>).</li>
+    <li>Decorators declared in an included header are imported automatically.</li>
+  </ul>
   <div class="note">Support for <strong>templates</strong> on decorators is available.</div>
 
   <h2 id="lifecycle">Lifecycle Decorators</h2>
@@ -316,29 +451,49 @@ public:
 
   <h2 id="enums">Inspectable Enums</h2>
   <p>Enums are introspectable: <code>enum → string</code> conversion, <code>string → enum</code> conversion, and other reflection operations.</p>
-<pre><code>enum class Color { Red, Green, Blue };</code></pre>
-  <p>Reflection functions notably include:</p>
-  <ul>
-    <li><code>enum → string</code> conversion;</li>
-    <li><code>string → enum</code> conversion;</li>
-    <li>other reflection utilities for enum values.</li>
-  </ul>
+<pre><code>@register
+enum class Color { Red, Green = 4, Blue };</code></pre>
+  <p>An enum must carry <code>@register</code> (and be named) to become introspectable. Reflection functions:</p>
+  <table>
+    <tr><th>Function</th><th>Description</th></tr>
+    <tr><td><code>std::enum_to_string(value)</code></td><td>Name of an enum value. Throws if the value or the enum is not registered.</td></tr>
+    <tr><td><code>std::string_to_enum&lt;E&gt;(name)</code></td><td>Enum value from its name. Throws if not found.</td></tr>
+    <tr><td><code>std::enum_has_value(value)</code></td><td><code>true</code> if the value is registered.</td></tr>
+    <tr><td><code>std::enum_has_name&lt;E&gt;(name)</code></td><td><code>true</code> if the name exists.</td></tr>
+    <tr><td><code>std::enum_names&lt;E&gt;()</code></td><td><code>std::vector&lt;std::string&gt;</code> of all names.</td></tr>
+    <tr><td><code>std::get_enum_info&lt;E&gt;()</code></td><td>Full <code>EnumInfo</code> (name, type, values).</td></tr>
+  </table>
+<pre><code>std::cout &lt;&lt; std::enum_to_string(Color::Green) &lt;&lt; std::endl;   // Green
+Color c = std::string_to_enum&lt;Color&gt;("Green");
+bool a = std::enum_has_value(c);
+bool b = std::enum_has_name&lt;Color&gt;("Green");
+std::vector&lt;std::string&gt; names = std::enum_names&lt;Color&gt;();
+auto info = std::get_enum_info&lt;Color&gt;();</code></pre>
 
   <h2 id="properties">Properties (Native Getters/Setters)</h2>
   <p>Classes and structures natively support properties with <code>get</code> and <code>set</code>, without boilerplate.</p>
 <pre><code>class Character {
-    int health;
-
 public:
-    property Health {
+    int health = 100;
+
+    property health {
         get { return health; }
         set { health = clamp(value, 0, 100); }
     }
 };</code></pre>
   <p>Usage:</p>
 <pre><code>Character c;
-c.Health = 150;    // calls the setter: health = 100
-int h = c.Health;  // calls the getter</code></pre>
+c.health = 150;    // calls the setter: health = 100
+int h = c.health;  // calls the getter</code></pre>
+  <h3>Rules</h3>
+  <ul>
+    <li>Properties work in <code>class</code>, <code>struct</code> and <code>union</code>.</li>
+    <li>A property needs a <strong>variable with the exact same name</strong> in the same type: the property and the variable are the same thing (<code>property health</code> backs <code>int health</code>). Inside the blocks, that name refers to the variable itself.</li>
+    <li>It must contain at least a <code>get</code> or a <code>set</code> block. Inside <code>set</code>, <code>value</code> is the assigned value, typed like the backing field.</li>
+    <li>Supported operators: <code>=</code>, <code>+=</code>, <code>-=</code>, <code>*=</code>, <code>/=</code>, <code>%=</code>, <code>&amp;=</code>, <code>|=</code>, <code>^=</code>, <code>&lt;&lt;=</code>, <code>&gt;&gt;=</code>, <code>++</code> and <code>--</code>.</li>
+    <li>Compound assignments need a getter; <code>++</code> / <code>--</code> need both a getter and a setter; assigning needs a setter.</li>
+    <li>Reads and writes are rewritten into calls to generated <code>get_&lt;name&gt;()</code> / <code>set_&lt;name&gt;(value)</code> methods, everywhere an expression is allowed. Properties declared in included headers work across files.</li>
+  </ul>
 
   <h2 id="ioutput">Output Redirection (IOutput)</h2>
   <p>All output can be redirected natively, regardless of the mechanism used in the code:</p>
@@ -349,9 +504,73 @@ int h = c.Health;  // calls the getter</code></pre>
     <li>and other standard output mechanisms</li>
   </ul>
   <p>Redirection is based on the <code>IOutput</code> interface: implement it to send output to a file, an editor console, the network, a log, etc.</p>
+<pre><code>#include &lt;ioutput&gt;</code></pre>
+  <p>The interface lives in the standard library header <code>ioutput</code> (see <a href="#stdlib">Standard Library</a>).</p>
 
   <h2 id="cmake">CMake Toolchain</h2>
   <p>C++Extended integrates with <strong>CMake</strong> through a dedicated toolchain. Extended sources are processed by <code>cxxe</code> before the usual C++ compilation, so the language can be adopted in an existing project without changing the build system.</p>
+  <ul>
+    <li><code>CMake/CXXE.cmake</code> automatically translates the <code>.cppe</code> sources and the <code>.hppe</code> headers found in the target's sources and <code>INCLUDE_DIRS</code>.</li>
+    <li>The generated <code>.cpp</code> is then compiled by your normal C++ compiler.</li>
+    <li>If your code uses reflection, enums, <code>dynamic</code> or <code>match</code>, add the runtime to the build: <code>cxxe runtime export &lt;dir&gt;</code> writes <code>cxxe_runtime.hpp</code> / <code>cxxe_runtime.cpp</code> (C++17 required).</li>
+  </ul>
+
+  <h2 id="runtime">Runtime Library (std)</h2>
+  <p>Features that act at runtime are backed by a small runtime, embedded in <code>cxxe</code> and exported with <code>cxxe runtime export &lt;dir&gt;</code>. It is header-driven (<code>cxxe_runtime.hpp</code>), thread-safe (registries are mutex-protected) and lives in the <code>std</code> namespace.</p>
+  <table>
+    <tr><th>Element</th><th>Purpose</th></tr>
+    <tr><td><code>std::DynamicValue</code></td><td>Implementation of the <code>dynamic</code> type (<code>is&lt;T&gt;()</code>, <code>as&lt;T&gt;()</code>, <code>has_value()</code>). Built on <code>std::any</code>.</td></tr>
+    <tr><td><code>std::Registry</code>, <code>ClassInfo</code>, <code>MemberInfo</code></td><td>Registry of <code>@register</code> classes and their <code>@exposed</code> members.</td></tr>
+    <tr><td><code>std::register_class&lt;T&gt;(name)</code></td><td>Registers a class (generated for you; <code>.expose_field()</code> / <code>.expose_method()</code> describe its members).</td></tr>
+    <tr><td><code>std::factory_new(name)</code></td><td>Creates an instance from a class name. Returns a <code>FactoryResult</code> convertible to <code>T*</code> (throws on type mismatch).</td></tr>
+    <tr><td><code>std::factory_find(name)</code></td><td>Returns the <code>ClassInfo</code> of a registered class.</td></tr>
+    <tr><td><code>std::get_member(obj, name)</code></td><td>Returns a <code>MemberProxy</code>: assign to write a field, convert to read it, call it to invoke a method.</td></tr>
+    <tr><td><code>std::EnumRegistry</code>, <code>register_enum&lt;E&gt;</code>, <code>enum_*</code></td><td>Enum reflection, see <a href="#enums">Inspectable Enums</a>.</td></tr>
+  </table>
+  <p>Runtime errors are reported as <code>std::runtime_error</code> with a message starting with <code>CXXE:</code> (class not registered, no default constructor, member not found, read-only field, null object, …). <code>as&lt;T&gt;()</code> on the wrong type throws <code>std::bad_any_cast</code>.</p>
+
+  <h2 id="stdlib">Standard Library</h2>
+  <p>The C++Extended standard library is installed in the <code>std</code> folder next to the compiler and is found without any <code>-I</code> option.</p>
+  <table>
+    <tr><th>Header</th><th>Purpose</th><th>Status</th></tr>
+    <tr><td><code>&lt;ioutput&gt;</code></td><td>Defines <code>IOutput</code>, the interface used to redirect <code>std::cout</code>, <code>printf</code>, <code>std::print</code> and other outputs.</td><td>Available</td></tr>
+    <tr><td><code>&lt;dynamic_list&gt;</code></td><td>A list that stores objects of different types.</td><td>Concept</td></tr>
+  </table>
+
+  <h2 id="diagnostics">Diagnostics</h2>
+  <p>Errors are reported in the usual compiler format:</p>
+<pre><code>file.cppe:12:5: error: @exposed member 'health' must be public</code></pre>
+  <table>
+    <tr><th>Area</th><th>Examples of errors</th></tr>
+    <tr><td>Named arguments</td><td>Unknown, duplicated or missing argument name. (A named call to a function with no visible declaration only produces a warning.)</td></tr>
+    <tr><td>Native decorators</td><td><code>@register</code> on something other than a class/struct/union/enum; unnamed enum; <code>@exposed</code> on something other than a member variable or method; <code>@exposed</code> member not <code>public</code>.</td></tr>
+    <tr><td>Custom decorators</td><td>Unknown decorator; wrong number of decorator arguments; wrong number of template arguments; mismatch between the decorator's <code>func(...)</code> signature and the decorated function; decorator applied to something that is not a function or method; more than 64 decorators on one function.</td></tr>
+    <tr><td>Properties</td><td>No <code>get</code> or <code>set</code> block; no backing variable with the same name; missing setter; missing getter for a compound assignment; missing getter or setter for <code>++</code> / <code>--</code>.</td></tr>
+    <tr><td><code>match</code></td><td>Invalid statement; value is not a simple variable; no case; more than 128 cases.</td></tr>
+    <tr><td>Includes and files</td><td>Unresolvable <code>#include "file"</code>; file that cannot be opened, read or written.</td></tr>
+  </table>
+
+  <h2 id="language-server">Language Server</h2>
+  <p><code>cxxe-language-server</code> is the shared LSP server for C++Extended. IDE extensions (VS Code, Visual Studio, CLion, …) only act as thin adapters: they register the <code>.cppe</code> language, start the server, connect to it over LSP (JSON-RPC on stdin/stdout) and provide the icon, settings and commands of their IDE.</p>
+  <p>The server reuses the real CXXE front end (lexer, parser, IR, decorators, properties, named arguments) instead of re-implementing C++, so it understands C++Extended syntax natively and works standalone.</p>
+  <h3>Supported features</h3>
+  <ul>
+    <li><code>initialize</code>, <code>shutdown</code>, <code>exit</code>; full document synchronization (<code>didOpen</code>, <code>didChange</code>, <code>didClose</code>);</li>
+    <li>diagnostics: syntax errors, structural errors, invalid decorators, inconsistent properties;</li>
+    <li><code>documentSymbol</code> and <code>workspace/symbol</code> (open documents), <code>hover</code>, <code>definition</code>, textual <code>references</code> in the current document;</li>
+    <li>completion: general, C++E decorators, C++E members after <code>.</code> / <code>-&gt;</code>, named arguments;</li>
+    <li><code>signatureHelp</code> and <code>semanticTokens/full</code>.</li>
+  </ul>
+  <h3>Building the server</h3>
+<pre><code># GCC
+gcc -std=c11 -O2 -Wall -Wextra -Werror cxxe_language_server.c -o cxxe-language-server
+
+# Clang
+clang -std=c11 -O2 -Wall -Wextra -Werror -Wno-unused-but-set-variable \
+  cxxe_language_server.c -o cxxe-language-server</code></pre>
+  <div class="note">Full semantic analysis of C++ (advanced templates, complete overload resolution, …) is intentionally out of scope. The planned next step is an optional <code>clangd</code> backend: CXXE generates compilable C++, <code>clangd</code> analyzes it, and a source map remaps diagnostics, definitions and hovers back to the original <code>.cppe</code>.</div>
+  <p>See <a href="./CXXE_LANGUAGE_SERVER.md">CXXE_LANGUAGE_SERVER.md</a> for the validation report (18 complex files, GCC/Clang strict builds, ASan/UBSan).</p>
+
 
   <h2 id="concepts">Features in Testing &amp; Roadmap</h2>
   <div class="note">These features are currently in the <strong>testing phase</strong>. Their syntax and behavior may still change based on testing and feedback.</div>
@@ -385,7 +604,8 @@ for (const auto&amp; value : values) {
         std::cout &lt;&lt; "bool: " &lt;&lt; value.as&lt;bool&gt;() &lt;&lt; std::endl;
 }</code></pre>
 
-  <div class="note">Calling <code>as&lt;T&gt;()</code> with a type that does not match the stored value results in a runtime error.</div>
+  <div class="note">Calling <code>as&lt;T&gt;()</code> with a type that does not match the stored value results in a runtime error (<code>std::bad_any_cast</code>).</div>
+  <p><code>dynamic</code> is compiled to <code>std::DynamicValue</code>, so the <a href="#runtime">runtime</a> must be part of your build.</p>
 
   <h3>Pattern matching <small>(Testing Phase)</small></h3>
   <p>A <code>match</code> statement handles a <code>dynamic</code> value according to its runtime type. Inside each branch, <code>value</code> is already treated as the corresponding type.</p>
@@ -416,9 +636,19 @@ int main()
 
     return 0;
 }</code></pre>
+  <ul>
+    <li>The matched value must be a <strong>simple variable</strong> (not an expression).</li>
+    <li>Each case is a type followed by <code>:</code>; <code>default:</code> or <code>_:</code> is the fallback. At least one case is required (maximum 128).</li>
+    <li><code>match</code> is lowered to an <code>if / else if</code> chain using <code>is&lt;T&gt;()</code> and <code>as&lt;T&gt;()</code>.</li>
+  </ul>
 
   <h3>JSON, XML, and Other Data Formats</h3>
   <p>Native facilities for manipulating common data formats (JSON, XML, etc.) directly from the language.</p>
+
+  <h3>Null Safety</h3>
+  <p>The idea is to turn a null check followed by a call into a safe-navigation call:</p>
+<pre><code>if (player) player-&gt;update();   // today
+player?-&gt;update();              // planned</code></pre>
 
   <h3>Automatic Serialization</h3>
   <p>The <code>@serializable</code> decorator will automatically generate serialization and deserialization for a class.</p>
@@ -429,11 +659,24 @@ public:
     int height;
 };</code></pre>
 
+  <h2 id="resources">Resources</h2>
+  <ul>
+    <li><a href="./CxxExtended_Language_Guide_v6.pdf" target="_blank" rel="noopener noreferrer">C++Extended Language Guide v6 (PDF)</a>: the current guide.</li>
+    <li><a href="./CxxExtended_Language_Guide_v3.pdf" target="_blank" rel="noopener noreferrer">C++Extended Language Guide v3 (PDF)</a>: previous version, kept for reference.</li>
+    <li><a href="./features.md">features.md</a>: roadmap (release goals, concepts, implemented features, standard library).</li>
+    <li><a href="./CXXE_LANGUAGE_SERVER.md">CXXE_LANGUAGE_SERVER.md</a>: language server design and validation.</li>
+    <li><a href="https://github.com/oscar-soirey/cxx-Extended" target="_blank" rel="noopener noreferrer">Source code on GitHub</a> and its <a href="https://github.com/oscar-soirey/cxx-Extended/releases" target="_blank" rel="noopener noreferrer">releases</a>.</li>
+  </ul>
+
   <h2 id="notes">Notes and Limitations</h2>
   <ul>
-    <li>The examples in this documentation illustrate the syntax; the exact names of functions in the <code>stde</code> library may vary between versions.</li>
+    <li>The examples in this documentation illustrate the syntax; the exact names of functions in the <code>std</code> library may vary between versions.</li>
     <li>An <code>@exposed</code> member must be <code>public</code>.</li>
     <li>Features marked as “Concept” are not implemented yet.</li>
+    <li>Features that rely on the runtime (<code>@register</code>, reflection, enums, <code>dynamic</code>, <code>match</code>) need <code>cxxe_runtime.hpp</code> and C++17 (<code>std::any</code>).</li>
+    <li><code>match</code> only accepts a simple variable as its value.</li>
+    <li>Properties require a backing variable with the exact same name in the same type.</li>
+    <li>The language server is not a full C++ semantic engine; it focuses on C++Extended syntax.</li>
   </ul>
 </main>
 
@@ -462,6 +705,29 @@ public:
   const modalBody = document.getElementById("release-modal-body");
   const modalClose = document.getElementById("release-modal-close");
   let lastModalTrigger = null;
+  const apiUrl = "https://api.github.com/repos/oscar-soirey/cxx-Extended/releases";
+
+  function openReleaseModal(release) {
+    modalTitle.textContent = release.name || release.tag_name || "Untitled Release";
+    modalMeta.textContent = "Version: " + (release.tag_name || "Unknown");
+    modalBody.innerHTML = renderMarkdown(release.body || "");
+    modal.classList.add("is-open");
+    modal.setAttribute("aria-hidden", "false");
+    document.body.classList.add("release-modal-open");
+    lastModalTrigger = document.activeElement;
+    modalClose.focus();
+  }
+
+  function closeReleaseModal() {
+    modal.classList.remove("is-open");
+    modal.setAttribute("aria-hidden", "true");
+    document.body.classList.remove("release-modal-open");
+    if (lastModalTrigger && lastModalTrigger.focus) lastModalTrigger.focus();
+  }
+
+  modalClose.addEventListener("click", closeReleaseModal);
+  modal.addEventListener("click", e => { if (e.target === modal) closeReleaseModal(); });
+  document.addEventListener("keydown", e => { if (e.key === "Escape") closeReleaseModal(); });
 
   function renderMarkdown(markdown) {
     const rendered = window.marked

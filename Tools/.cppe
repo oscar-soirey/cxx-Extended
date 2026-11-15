@@ -1,0 +1,19 @@
+#include <iostream>
+
+void @say_hello() -> func(...)
+{
+    std::cout << "Hello" << std::endl;
+    func(...);
+}
+
+@say_hello
+void test(int a)
+{
+
+}
+
+int main()
+{
+    test(0);
+    return 0;
+}

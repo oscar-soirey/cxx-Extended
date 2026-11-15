@@ -1,3 +1,0 @@
-int cxxe_value() {
-    return 42;
-}
