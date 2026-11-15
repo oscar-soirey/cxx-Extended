@@ -2,7 +2,7 @@
 
 CXXE comes with a collection of tools designed to make development with CXXE easier, faster, and more enjoyable.
 
-## Language Server — `cxxe\_ls.exe`
+## Language Server — `cxxe-language-server.exe`
 
 The CXXE Language Server provides intelligent editor support for CXXE-based projects.
 
@@ -70,7 +70,7 @@ The linter can be used independently or integrated into the CXXE Language Server
 |Tool|Purpose|
 |-|-|
 |`cxxe.exe`|Compiler and main project CLI|
-|`cxxe\_ls.exe`|Language Server / LSP|
+|`cxxe-language-server.exe`|Language Server / LSP|
 |`cxxe-lint.exe`|Static analyzer / linter|
 |`cxxe-doc.exe`|Documentation generator|
 
